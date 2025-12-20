@@ -1,67 +1,133 @@
 use indexmap::{Equivalent, IndexSet};
 use serde::{
-    Serialize, Serializer,
     ser::{
         SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,
         SerializeTupleStruct, SerializeTupleVariant,
     },
+    Deserialize, Serialize, Serializer,
 };
-use std::{hash::Hash, marker::PhantomData};
+use std::{borrow::Cow, hash::Hash, marker::PhantomData};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-enum ValueNode {
-    Bool(bool),
-    I8(i8),
-    I16(i16),
-    I32(i32),
-    I64([u8; 8]),
-    I128([u8; 16]),
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ValueKind {
+    Bool,
 
-    U8(u8),
-    U16(u16),
-    U32(u32),
-    U64([u8; 8]),
-    U128([u8; 16]),
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
 
-    F32(u32),
-    F64([u8; 8]),
-    Char(char),
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
 
-    String(ValueStringIndex),
-    Bytes(ValueBytesIndex),
+    F32,
+    F64,
+    Char,
+
+    String,
+    Bytes,
 
     None,
-    Some(ValueNodeIndex),
+    Some,
 
     Unit,
-    UnitStruct(ValueNameIndex),
-    UnitVariant(ValueNameIndex, ValueNameIndex),
+    UnitStruct,
+    UnitVariant,
 
-    NewtypeStruct(ValueNameIndex, ValueNodeIndex),
-    NewtypeVariant(ValueNameIndex, ValueNameIndex, ValueNodeIndex),
+    NewtypeStruct,
+    NewtypeVariant,
 
-    Sequence(ValueNodeListIndex),
-    Map(ValueNodeListIndex, ValueNodeListIndex),
+    Sequence,
+    Map,
+    Tuple,
+    TupleStruct,
+    TupleVariant,
+    Struct,
 
-    Tuple(ValueNodeListIndex),
-    TupleStruct(ValueNameIndex, ValueNodeListIndex),
-    TupleVariant(ValueNameIndex, ValueNameIndex, ValueNodeListIndex),
-
-    Struct(ValueNameIndex, ValueNameListIndex, ValueNodeListIndex),
-    StructVariant(
-        ValueNameIndex,
-        ValueNameIndex,
-        ValueNameListIndex,
-        ValueNodeListIndex,
-    ),
+    Skip,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum PartialSchema {
+    Bool,
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+
+    F32,
+    F64,
+    Char,
+
+    String,
+    Bytes,
+
+    None,
+    Some(PartialSchemaIndex),
+
+    Unit,
+    UnitStruct(PartialNameIndex),
+    UnitVariant(PartialNameIndex, PartialNameIndex),
+
+    NewtypeStruct(PartialNameIndex, PartialSchemaIndex),
+    NewtypeVariant(PartialNameIndex, PartialNameIndex, PartialSchemaIndex),
+
+    Sequence(PartialSchemaIndex),
+    Map(PartialSchemaIndex, PartialSchemaIndex),
+
+    Tuple(Box<[PartialSchemaIndex]>),
+    TupleStruct(PartialNameIndex, Box<[PartialSchemaIndex]>),
+    TupleVariant(
+        PartialNameIndex,
+        PartialNameIndex,
+        Box<[PartialSchemaIndex]>,
+    ),
+
+    Struct(
+        PartialNameIndex,
+        Box<[(PartialNameIndex, PartialSchemaIndex)]>,
+    ),
+    StructVariant(
+        PartialNameIndex,
+        PartialNameIndex,
+        Box<[(PartialNameIndex, PartialSchemaIndex)]>,
+    ),
+
+    Union(Box<[PartialSchemaIndex]>),
+    Skip,
+}
+
+pub struct PartialValue([u32; 4]);
 
 macro_rules! u32_indices {
     ($($index_ty:ident => $error:ident,)+) => {
         $(
-            #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+            #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
             pub struct $index_ty(u32);
+
+            impl From<$index_ty> for u32 {
+                fn from(index: $index_ty) -> u32 {
+                    index.0.into()
+                }
+            }
+
+            impl From<$index_ty> for usize {
+                fn from(index: $index_ty) -> usize {
+                    usize::try_from(u32::from(index.0)).expect("usize must be at least 32-bits")
+                }
+            }
 
             impl TryFrom<usize> for $index_ty {
                 type Error = SerError;
@@ -78,79 +144,78 @@ macro_rules! u32_indices {
 }
 
 u32_indices! {
-    ValueNodeIndex => TooManyNodes,
-    ValueNodeListIndex => TooManyNodeLists,
-    ValueNameIndex => TooManyNames,
-    ValueNameListIndex => TooManyNameLists,
-    ValueStringIndex => TooManyStrings,
-    ValueBytesIndex => TooManyByteStrings,
+    PartialSchemaIndex => TooManySchemas,
+    PartialSchemaListIndex => TooManySchemaLists,
+    PartialNameIndex => TooManyNames,
+    PartialNameListIndex => TooManyNameLists,
+    PartialU32Index => TooManyValues,
+    PartialStringIndex => TooManyStrings,
+    PartialCharIndex => TooManyStrings,
+    PartialByteStringIndex => TooManyByteStrings,
+    PartialByteIndex => TooManyByteStrings,
+    PartialBytes => TooManyByteStrings,
+    PartialValueIndex => TooManyValues,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Default, Clone)]
 pub struct Value {
-    root_index: ValueNodeIndex,
-    nodes: Pool<ValueNode, ValueNodeIndex>,
-
-    strings: Pool<Box<str>, ValueStringIndex>,
-    bytes: Pool<Box<[u8]>, ValueBytesIndex>,
-    names: Pool<&'static str, ValueNameIndex>,
-
-    node_lists: Pool<Box<[ValueNodeIndex]>, ValueNodeListIndex>,
-    name_lists: Pool<Box<[ValueNameIndex]>, ValueNameListIndex>,
+    bytes_data: Vec<u8>,
+    string_data: String,
+    value_schemas: Vec<PartialSchemaIndex>,
+    value_names: Vec<PartialNameIndex>,
+    schemas: Pool<PartialSchema, PartialSchemaIndex>,
+    names: Pool<Cow<'static, str>, PartialNameIndex>,
 }
 
 impl Value {
-    pub fn from_serializable<ValueT>(value: &ValueT) -> Result<Self, SerError>
-    where
-        ValueT: ?Sized + Serialize,
-    {
-        let mut serializer = ValueSerializer {
-            value: Value {
-                root_index: ValueNodeIndex(!0),
-                nodes: Pool::new(),
-
-                strings: Pool::new(),
-                bytes: Pool::new(),
-                names: Pool::new(),
-
-                node_lists: Pool::new(),
-                name_lists: Pool::new(),
-            },
-        };
-        let root_index = ValueT::serialize(value, &mut serializer)?;
-        serializer.value.root_index = root_index;
-        Ok(serializer.value)
+    fn push_schema(&mut self, schema: PartialSchema) -> Result<PartialSchemaIndex, SerError> {
+        let schema = self.schemas.intern(schema)?;
+        self.value_schemas.push(schema);
+        Ok(schema)
     }
 
-    fn add_node(&mut self, node: ValueNode) -> Result<ValueNodeIndex, SerError> {
-        self.nodes.intern(node)
+    fn next_schema(&mut self) -> Result<PartialValueIndex, SerError> {
+        PartialValueIndex::try_from(self.value_schemas.len())
     }
 
-    fn add_string(&mut self, string: &str) -> Result<ValueStringIndex, SerError> {
-        self.strings.intern_borrowed(string)
+    fn reserve_schema(&mut self) -> Result<PartialValueIndex, SerError> {
+        let index = self.next_schema()?;
+        self.value_schemas.push(PartialSchemaIndex(!0));
+        Ok(index)
     }
 
-    fn add_bytes(&mut self, bytes: &[u8]) -> Result<ValueBytesIndex, SerError> {
-        self.bytes.intern_borrowed(bytes)
-    }
-
-    fn add_name(&mut self, name: &'static str) -> Result<ValueNameIndex, SerError> {
-        self.names.intern_borrowed(name)
-    }
-
-    fn add_node_list(
+    fn fill_reserved_schema(
         &mut self,
-        node_list: impl Into<Box<[ValueNodeIndex]>>,
-    ) -> Result<ValueNodeListIndex, SerError> {
-        self.node_lists.intern(node_list.into())
+        index: PartialValueIndex,
+        schema: PartialSchema,
+    ) -> Result<PartialSchemaIndex, SerError> {
+        let schema = self.schemas.intern(schema)?;
+        self.value_schemas[usize::from(index)] = schema;
+        Ok(schema)
     }
 
-    fn add_name_list(
-        &mut self,
-        name_list: impl Into<Box<[ValueNameIndex]>>,
-    ) -> Result<ValueNameListIndex, SerError> {
-        self.name_lists.intern(name_list.into())
+    fn reserve_integer<T>(&mut self) -> Result<PartialByteIndex, SerError> {
+        self.reserve_bytes(std::mem::size_of::<T>())
     }
+
+    fn reserve_bytes(&mut self, size: usize) -> Result<PartialByteIndex, SerError> {
+        let index = PartialByteIndex::try_from(self.bytes_data.len())?;
+        self.bytes_data.extend(std::iter::repeat_n(!0, size));
+        Ok(index)
+    }
+
+    fn fill_reserved_bytes(&mut self, index: PartialByteIndex, data: &[u8]) {
+        self.bytes_data[index.into()..][..data.len()].copy_from_slice(data);
+    }
+}
+
+pub fn to_value<SerializeT>(value: &SerializeT) -> Result<Value, SerError>
+where
+    SerializeT: ?Sized + Serialize,
+{
+    let mut serializer = ValueSerializer::default();
+    SerializeT::serialize(value, &mut serializer)?;
+    Ok(serializer.value)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -181,6 +246,13 @@ where
 
     pub fn intern(&mut self, value: ValueT) -> Result<ValueIndexT, SerError> {
         ValueIndexT::try_from(self.inner.insert_full(value).0)
+    }
+
+    pub fn intern_from<FromT>(&mut self, value: FromT) -> Result<ValueIndexT, SerError>
+    where
+        ValueT: From<FromT>,
+    {
+        ValueIndexT::try_from(self.inner.insert_full(value.into()).0)
     }
 
     pub fn intern_borrowed<'s, 'q, QueryT>(
@@ -218,10 +290,10 @@ pub fn zigzag128_decode(value: u128) -> i128 {
 #[derive(Debug, Error)]
 pub enum SerError {
     #[error("too many nodes for u32")]
-    TooManyNodes,
+    TooManySchemas,
 
     #[error("too many node lists for u32")]
-    TooManyNodeLists,
+    TooManySchemaLists,
 
     #[error("too many structs for u32")]
     TooManyNames,
@@ -234,6 +306,9 @@ pub enum SerError {
 
     #[error("too many byte strings for u32")]
     TooManyByteStrings,
+
+    #[error("too many values for u32")]
+    TooManyValues,
 
     #[error("attempted to serialize map key without value")]
     UnpairedMapKey,
@@ -256,70 +331,84 @@ impl serde::ser::Error for SerError {
 
 pub struct ValueSerializeSeq<'a> {
     parent: &'a mut ValueSerializer,
-    nodes: Vec<ValueNodeIndex>,
+    reserved_schema: PartialValueIndex,
+    reserved_length: PartialByteIndex,
+    schemas: Vec<PartialValueIndex>,
 }
 
 impl SerializeSeq for ValueSerializeSeq<'_> {
-    type Ok = ValueNodeIndex;
+    type Ok = PartialSchemaIndex;
     type Error = SerError;
 
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
         T: ?Sized + serde::Serialize,
     {
-        self.nodes.push(T::serialize(value, &mut *self.parent)?);
+        let schema = T::serialize(value, &mut *self.parent)?;
+        self.schemas.push(schema);
         Ok(())
     }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        let node_list = self.parent.value.add_node_list(self.nodes)?;
-        self.parent.value.add_node(ValueNode::Sequence(node_list))
+    fn end(mut self) -> Result<Self::Ok, Self::Error> {
+        self.schemas.sort_unstable();
+        self.schemas.dedup();
+        let item = self
+            .parent
+            .value
+            .schemas
+            .intern(PartialSchema::Union(self.schemas.into()))?;
+        self.parent
+            .value
+            .schemas
+            .intern(PartialSchema::Sequence(item))
     }
 }
 
 pub struct ValueSerializeTuple<'a> {
     parent: &'a mut ValueSerializer,
-    nodes: Vec<ValueNodeIndex>,
+    schemas: Vec<PartialSchemaIndex>,
 }
 
 impl SerializeTuple for ValueSerializeTuple<'_> {
-    type Ok = ValueNodeIndex;
+    type Ok = PartialSchemaIndex;
     type Error = SerError;
 
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
         T: ?Sized + serde::Serialize,
     {
-        self.nodes.push(T::serialize(value, &mut *self.parent)?);
+        self.schemas.push(T::serialize(value, &mut *self.parent)?);
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        let node_list = self.parent.value.add_node_list(self.nodes)?;
-        self.parent.value.add_node(ValueNode::Tuple(node_list))
+        self.parent
+            .value
+            .schemas
+            .intern(PartialSchema::Tuple(self.schemas.into()))
     }
 }
 
 pub struct ValueSerializeTupleStruct<'a> {
     parent: &'a mut ValueSerializer,
-    name: ValueNameIndex,
-    nodes: Vec<ValueNodeIndex>,
+    name: PartialNameIndex,
+    schemas: Vec<PartialSchemaIndex>,
 }
 
 impl SerializeTupleStruct for ValueSerializeTupleStruct<'_> {
-    type Ok = ValueNodeIndex;
+    type Ok = PartialSchemaIndex;
     type Error = SerError;
 
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
         T: ?Sized + serde::Serialize,
     {
-        self.nodes.push(T::serialize(value, &mut *self.parent)?);
+        self.schemas.push(T::serialize(value, &mut *self.parent)?);
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        let node_list = self.parent.value.add_node_list(self.nodes)?;
+        let node_list = self.parent.value.add_node_list(self.schemas)?;
         self.parent
             .value
             .add_node(ValueNode::TupleStruct(self.name, node_list))
@@ -330,23 +419,23 @@ pub struct ValueSerializeTupleVariant<'a> {
     parent: &'a mut ValueSerializer,
     name: ValueNameIndex,
     variant: ValueNameIndex,
-    nodes: Vec<ValueNodeIndex>,
+    schemas: Vec<ValueNodeIndex>,
 }
 
 impl SerializeTupleVariant for ValueSerializeTupleVariant<'_> {
-    type Ok = ValueNodeIndex;
+    type Ok = PartialSchemaIndex;
     type Error = SerError;
 
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
         T: ?Sized + serde::Serialize,
     {
-        self.nodes.push(T::serialize(value, &mut *self.parent)?);
+        self.schemas.push(T::serialize(value, &mut *self.parent)?);
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        let node_list = self.parent.value.add_node_list(self.nodes)?;
+        let node_list = self.parent.value.add_node_list(self.schemas)?;
         self.parent
             .value
             .add_node(ValueNode::TupleVariant(self.name, self.variant, node_list))
@@ -360,7 +449,7 @@ pub struct ValueSerializeMap<'a> {
 }
 
 impl SerializeMap for ValueSerializeMap<'_> {
-    type Ok = ValueNodeIndex;
+    type Ok = PartialSchemaIndex;
     type Error = SerError;
 
     fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
@@ -413,11 +502,11 @@ impl SerializeMap for ValueSerializeMap<'_> {
 pub struct ValueSerializeStruct<'a> {
     parent: &'a mut ValueSerializer,
     name: ValueNameIndex,
-    entries: Vec<(ValueNameIndex, ValueNodeIndex)>,
+    fields: Vec<(ValueNameIndex, ValueNodeIndex)>,
 }
 
 impl SerializeStruct for ValueSerializeStruct<'_> {
-    type Ok = ValueNodeIndex;
+    type Ok = PartialSchemaIndex;
     type Error = SerError;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
@@ -426,14 +515,14 @@ impl SerializeStruct for ValueSerializeStruct<'_> {
     {
         let key = self.parent.value.add_name(key)?;
         let value = T::serialize(value, &mut *self.parent)?;
-        self.entries.push((key, value));
+        self.fields.push((key, value));
         Ok(())
     }
 
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        self.entries.sort_unstable();
-        self.entries.dedup_by_key(|&mut (key, _)| key);
-        let (keys, values): (Vec<_>, Vec<_>) = self.entries.into_iter().unzip();
+        self.fields.sort_unstable();
+        self.fields.dedup_by_key(|&mut (key, _)| key);
+        let (keys, values): (Vec<_>, Vec<_>) = self.fields.into_iter().unzip();
         let keys = self.parent.value.add_name_list(keys)?;
         let values = self.parent.value.add_node_list(values)?;
         self.parent
@@ -450,7 +539,7 @@ pub struct ValueSerializeStructVariant<'a> {
 }
 
 impl SerializeStructVariant for ValueSerializeStructVariant<'_> {
-    type Ok = ValueNodeIndex;
+    type Ok = PartialSchemaIndex;
     type Error = SerError;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
@@ -478,12 +567,35 @@ impl SerializeStructVariant for ValueSerializeStructVariant<'_> {
     }
 }
 
+#[derive(Default, Clone)]
 pub struct ValueSerializer {
     value: Value,
 }
 
+macro_rules! fn_serialize_as_u8 {
+    ($(($fn_name:ident, $value_type:ty, $schema:ident),)+) => {
+        $(
+            fn $fn_name(self, value: $value_type) -> Result<Self::Ok, Self::Error> {
+                self.value.bytes_data.push(value as u8);
+                self.value.push_schema(PartialSchema::$schema)
+            }
+        )+
+    };
+}
+
+macro_rules! fn_serialize_as_le_bytes {
+    ($(($fn_name:ident, $value_type:ty, $schema:ident ),)+) => {
+        $(
+            fn $fn_name(self, value: $value_type) -> Result<Self::Ok, Self::Error> {
+                self.value.bytes_data.extend_from_slice(&value.to_le_bytes());
+                self.value.push_schema(PartialSchema::$schema)
+            }
+        )+
+    };
+}
+
 impl<'a> Serializer for &'a mut ValueSerializer {
-    type Ok = ValueNodeIndex;
+    type Ok = PartialSchemaIndex;
     type Error = SerError;
 
     type SerializeSeq = ValueSerializeSeq<'a>;
@@ -494,91 +606,67 @@ impl<'a> Serializer for &'a mut ValueSerializer {
     type SerializeStruct = ValueSerializeStruct<'a>;
     type SerializeStructVariant = ValueSerializeStructVariant<'a>;
 
-    fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::Bool(v))
+    fn_serialize_as_u8! {
+        (serialize_bool, bool, Bool),
+        (serialize_i8, i8, I8),
+        (serialize_u8, u8, U8),
     }
 
-    fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::I8(v))
+    fn_serialize_as_le_bytes! {
+        (serialize_i16, i16, I16),
+        (serialize_i32, i32, I32),
+        (serialize_i64, i64, I64),
+        (serialize_i128, i128, I128),
+        (serialize_u16, u16, U16),
+        (serialize_u32, u32, U32),
+        (serialize_u64, u64, U64),
+        (serialize_u128, u128, U128),
+        (serialize_f32, f32, F32),
+        (serialize_f64, f64, F64),
     }
 
-    fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::I16(v))
+    fn serialize_char(self, value: char) -> Result<Self::Ok, Self::Error> {
+        self.value.string_data.push(value);
+        self.value.push_schema(PartialSchema::Char)
     }
 
-    fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::I32(v))
+    fn serialize_str(self, value: &str) -> Result<Self::Ok, Self::Error> {
+        self.value
+            .bytes_data
+            .extend_from_slice(&value.len().to_le_bytes());
+        self.value.string_data.push_str(value);
+        self.value.push_schema(PartialSchema::String)
     }
 
-    fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::I64(v.to_le_bytes()))
-    }
-
-    fn serialize_i128(self, v: i128) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::I128(v.to_le_bytes()))
-    }
-
-    fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::U8(v))
-    }
-
-    fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::U16(v))
-    }
-
-    fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::U32(v))
-    }
-
-    fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::U64(v.to_le_bytes()))
-    }
-
-    fn serialize_u128(self, v: u128) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::U128(v.to_le_bytes()))
-    }
-
-    fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::F32(v.to_bits()))
-    }
-
-    fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::F64(v.to_le_bytes()))
-    }
-
-    fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::Char(v))
-    }
-
-    fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-        let node = ValueNode::String(self.value.add_string(v)?);
-        self.value.add_node(node)
-    }
-
-    fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        let node = ValueNode::Bytes(self.value.add_bytes(v)?);
-        self.value.add_node(node)
+    fn serialize_bytes(self, value: &[u8]) -> Result<Self::Ok, Self::Error> {
+        self.value
+            .bytes_data
+            .extend_from_slice(&value.len().to_le_bytes());
+        self.value.bytes_data.extend_from_slice(value);
+        self.value.push_schema(PartialSchema::Bytes)
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::None)
+        self.value.push_schema(PartialSchema::None)
     }
 
     fn serialize_some<T>(self, value: &T) -> Result<Self::Ok, Self::Error>
     where
         T: ?Sized + Serialize,
     {
-        let node = T::serialize(value, &mut *self)?;
-        self.value.add_node(ValueNode::Some(node))
+        let reserved = self.value.reserve_schema()?;
+        let inner = T::serialize(value, &mut *self)?;
+        self.value
+            .fill_reserved_schema(reserved, PartialSchema::Some(inner))
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        self.value.add_node(ValueNode::Unit)
+        self.value.push_schema(PartialSchema::Unit)
     }
 
     fn serialize_unit_struct(self, name: &'static str) -> Result<Self::Ok, Self::Error> {
-        let name = self.value.add_name(name)?;
-        self.value.add_node(ValueNode::UnitStruct(name))
+        let name = self.value.names.intern_from(name)?;
+        self.value.push_schema(PartialSchema::UnitStruct(name))
     }
 
     fn serialize_unit_variant(
@@ -587,9 +675,10 @@ impl<'a> Serializer for &'a mut ValueSerializer {
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        let name = self.value.add_name(name)?;
-        let variant = self.value.add_name(variant)?;
-        self.value.add_node(ValueNode::UnitVariant(name, variant))
+        let name = self.value.names.intern_from(name)?;
+        let variant = self.value.names.intern_from(variant)?;
+        self.value
+            .push_schema(PartialSchema::UnitVariant(name, variant))
     }
 
     fn serialize_newtype_struct<T>(
@@ -600,9 +689,11 @@ impl<'a> Serializer for &'a mut ValueSerializer {
     where
         T: ?Sized + Serialize,
     {
-        let name = self.value.add_name(name)?;
-        let node = T::serialize(value, &mut *self)?;
-        self.value.add_node(ValueNode::NewtypeStruct(name, node))
+        let name = self.value.names.intern_from(name)?;
+        let reserved = self.value.reserve_schema()?;
+        let inner = T::serialize(value, &mut *self)?;
+        self.value
+            .fill_reserved_schema(reserved, PartialSchema::NewtypeStruct(name, inner))
     }
 
     fn serialize_newtype_variant<T>(
@@ -615,24 +706,29 @@ impl<'a> Serializer for &'a mut ValueSerializer {
     where
         T: ?Sized + Serialize,
     {
-        let name = self.value.add_name(name)?;
-        let variant = self.value.add_name(variant)?;
-        let node = T::serialize(value, &mut *self)?;
-        self.value
-            .add_node(ValueNode::NewtypeVariant(name, variant, node))
+        let name = self.value.names.intern_from(name)?;
+        let variant = self.value.names.intern_from(variant)?;
+        let reserved = self.value.reserve_schema()?;
+        let inner = T::serialize(value, &mut *self)?;
+        self.value.fill_reserved_schema(
+            reserved,
+            PartialSchema::NewtypeVariant(name, variant, inner),
+        )
     }
 
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
         Ok(ValueSerializeSeq {
+            reserved_schema: self.value.reserve_schema(),
+            reserved_length: self.value.reserve_integer::<usize>(),
+            schemas: len.map(Vec::with_capacity).unwrap_or_default(),
             parent: self,
-            nodes: len.map(Vec::with_capacity).unwrap_or_default(),
         })
     }
 
     fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
         Ok(ValueSerializeTuple {
             parent: self,
-            nodes: Vec::with_capacity(len),
+            schemas: Vec::with_capacity(len),
         })
     }
 
@@ -641,11 +737,11 @@ impl<'a> Serializer for &'a mut ValueSerializer {
         name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        let name = self.value.add_name(name)?;
+        let name = self.value.names.intern_from(name)?;
         Ok(ValueSerializeTupleStruct {
             name,
             parent: self,
-            nodes: Vec::with_capacity(len),
+            schemas: Vec::with_capacity(len),
         })
     }
 
@@ -656,13 +752,13 @@ impl<'a> Serializer for &'a mut ValueSerializer {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        let name = self.value.add_name(name)?;
-        let variant = self.value.add_name(variant)?;
+        let name = self.value.names.intern_from(name)?;
+        let variant = self.value.names.intern_from(variant)?;
         Ok(ValueSerializeTupleVariant {
             name,
             variant,
             parent: self,
-            nodes: Vec::with_capacity(len),
+            schemas: Vec::with_capacity(len),
         })
     }
 
@@ -670,7 +766,7 @@ impl<'a> Serializer for &'a mut ValueSerializer {
         Ok(ValueSerializeMap {
             parent: self,
             entries: len.map(Vec::with_capacity).unwrap_or_default(),
-            next_key: ValueNodeIndex(!0),
+            next_key: PartialSchemaIndex(!0),
         })
     }
 
@@ -679,11 +775,11 @@ impl<'a> Serializer for &'a mut ValueSerializer {
         name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        let name = self.value.add_name(name)?;
+        let name = self.value.names.intern_from(name)?;
         Ok(ValueSerializeStruct {
             name,
             parent: self,
-            entries: Vec::with_capacity(len),
+            fields: Vec::with_capacity(len),
         })
     }
 
@@ -694,8 +790,8 @@ impl<'a> Serializer for &'a mut ValueSerializer {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        let name = self.value.add_name(name)?;
-        let variant = self.value.add_name(variant)?;
+        let name = self.value.names.intern_from(name)?;
+        let variant = self.value.names.intern_from(variant)?;
         Ok(ValueSerializeStructVariant {
             name,
             variant,

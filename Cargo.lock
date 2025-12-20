@@ -8,8 +8,10 @@ version = "0.1.0"
 dependencies = [
  "bitvec",
  "indexmap",
+ "nonmax",
  "ron",
  "serde",
+ "smallvec",
  "thin-vec",
  "thiserror",
 ]
@@ -64,6 +66,12 @@ dependencies = [
  "serde",
  "serde_core",
 ]
+
+[[package]]
+name = "nonmax"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "610a5acd306ec67f907abe5567859a3c693fb9886eb1f012ab8f2a47bef3db51"
 
 [[package]]
 name = "once_cell"
@@ -138,6 +146,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "smallvec"
+version = "1.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "syn"
