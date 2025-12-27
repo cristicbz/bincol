@@ -1,5 +1,4 @@
 use bincol::Described;
-use itertools::sorted;
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
 
@@ -58,11 +57,75 @@ struct Value<T>(T);
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Simple {
+    #[serde(skip_serializing_if = "Option::is_none")]
     a: Option<u32>,
+
+    b: Option<u32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    c: Option<u32>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct WithTransform {
+    #[serde(default, skip_serializing_if = "is_default")]
+    transform: Transform,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+struct Transform {
+    #[serde(default, skip_serializing_if = "is_default")]
+    translation: Vec3,
+
+    #[serde(default, skip_serializing_if = "is_default")]
+    rotation: Quat,
+
+    #[serde(default = "ones", skip_serializing_if = "is_ones")]
+    scale: Vec3,
+}
+
+impl Default for Transform {
+    #[inline]
+    fn default() -> Self {
+        Transform {
+            translation: Vec3::default(),
+            rotation: Quat::default(),
+            scale: ones(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+struct Vec3(f32, f32, f32);
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Default)]
+struct Quat(f32, f32, f32, f32);
+
 fn main() {
-    let mut value = Value(vec![Simple { a: None }, Simple { a: Some(10) }]);
+    let mut value = Value(vec![
+        WithTransform {
+            transform: Transform::default(),
+        },
+        WithTransform {
+            transform: Transform {
+                translation: Vec3(1.0, 0.0, 0.0),
+                ..Default::default()
+            },
+        },
+        WithTransform {
+            transform: Transform {
+                rotation: Quat(2.0, 2.0, 2.0, 2.0),
+                ..Default::default()
+            },
+        },
+        WithTransform {
+            transform: Transform {
+                translation: Vec3(1.0, 0.0, 0.0),
+                rotation: Quat(2.0, 2.0, 2.0, 2.0),
+                ..Default::default()
+            },
+        },
+    ]);
     //let original = Value(vec![
     //    Untagged::U32(10),
     //    Untagged::F32(0.5),
@@ -88,4 +151,19 @@ fn main() {
         .unwrap()
         .0;
     eprintln!("DESERIALIZED:\n{:#?}\n\n", value,);
+}
+
+#[inline]
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+#[inline]
+fn ones() -> Vec3 {
+    Vec3(1., 1., 1.)
+}
+
+#[inline]
+fn is_ones(value: &Vec3) -> bool {
+    value == &Vec3(1., 1., 1.)
 }
