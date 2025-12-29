@@ -8,7 +8,7 @@ macro_rules! u32_indices {
     ($($index_ty:ident => $error:ident,)+) => {
         $(
             #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-            pub(crate) struct $index_ty(nonmax::NonMaxU32);
+            pub(crate) struct $index_ty(u32);
 
             impl From<$index_ty> for u32 {
                 #[inline]
@@ -29,22 +29,17 @@ macro_rules! u32_indices {
 
                 #[inline]
                 fn try_from(value: usize) -> Result<Self, Self::Error> {
-                    u32::try_from(value)
-                        .ok()
-                        .and_then(nonmax::NonMaxU32::new)
-                        .map($index_ty)
-                        .ok_or($crate::errors::SerError::$error)
+                    match u32::try_from(value) {
+                        Ok(value) => Ok($index_ty(value)),
+                        Err(_) => Err($crate::errors::SerError::$error),
+                    }
                 }
             }
 
-            impl TryFrom<u32> for $index_ty {
-                type Error = $crate::errors::SerError;
-
+            impl From<u32> for $index_ty {
                 #[inline]
-                fn try_from(value: u32) -> Result<Self, Self::Error> {
-                    nonmax::NonMaxU32::new(value)
-                        .map($index_ty)
-                        .ok_or($crate::errors::SerError::$error)
+                fn from(value: u32) -> Self {
+                    $index_ty(value)
                 }
             }
         )+

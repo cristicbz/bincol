@@ -11,28 +11,12 @@ use crate::{
     Schema,
     anonymous_union::{UNION_ENUM_NAME, deserialized_anonymous_variants},
     deferred::{self, CallResult, CallValue, CanonicalVisit, DeferredDeserialize},
-    described::{DescribedBy, SeedDescribedBy, SeedSelfDescribed, SelfDescribed},
+    described::{DescribedBy, SelfDescribed},
     indices::{
         FieldIndex, FieldListIndex, NameIndex, NameListIndex, SchemaNodeIndex, SchemaNodeListIndex,
     },
     schema::SchemaNode,
 };
-
-impl Schema {
-    pub fn describe_seed<'schema, 'de, SeedT>(
-        &'schema self,
-        seed: SeedT,
-    ) -> SeedDescribedBy<'schema, SeedT>
-    where
-        SeedT: DeserializeSeed<'de>,
-    {
-        SeedDescribedBy(seed, self)
-    }
-
-    pub fn describe<'schema, 'de, T>(&'schema self) -> SeedDescribedBy<'schema, PhantomData<T>> {
-        SeedDescribedBy(PhantomData, self)
-    }
-}
 
 impl<'de, T> Deserialize<'de> for SelfDescribed<T>
 where
@@ -43,11 +27,11 @@ where
     where
         D: Deserializer<'de>,
     {
-        SeedSelfDescribed(PhantomData).deserialize(deserializer)
+        SelfDescribed(PhantomData).deserialize(deserializer)
     }
 }
 
-impl<'de, SeedT> DeserializeSeed<'de> for SeedSelfDescribed<SeedT>
+impl<'de, SeedT> DeserializeSeed<'de> for SelfDescribed<SeedT>
 where
     SeedT: DeserializeSeed<'de>,
 {
@@ -82,7 +66,7 @@ where
                     .ok_or_else(|| A::Error::invalid_length(0, &self))?;
 
                 Ok(SelfDescribed(
-                    seq.next_element_seed(SeedDescribedBy(self.0, &schema))?
+                    seq.next_element_seed(DescribedBy(self.0, &schema))?
                         .ok_or_else(|| {
                             A::Error::custom(
                                 "missing described-elsewhere pair in described object pair",
@@ -97,7 +81,7 @@ where
     }
 }
 
-impl<'de, 'schema, SeedT> DeserializeSeed<'de> for SeedDescribedBy<'schema, SeedT>
+impl<'de, 'schema, SeedT> DeserializeSeed<'de> for DescribedBy<'schema, SeedT>
 where
     SeedT: DeserializeSeed<'de>,
 {
@@ -108,43 +92,13 @@ where
     where
         D: Deserializer<'de>,
     {
-        struct Visitor<'schema, SeedT>(SeedT, &'schema Schema);
-        impl<'de, 'schema, SeedT> serde::de::Visitor<'de> for Visitor<'schema, SeedT>
-        where
-            SeedT: DeserializeSeed<'de>,
-        {
-            type Value = SeedT::Value;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(
-                    formatter,
-                    "a described-elsewhere object: (schema index, object data) pair"
-                )
-            }
-
-            #[inline]
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let schema = seq
-                    .next_element::<SchemaNodeIndex>()?
-                    .ok_or_else(|| A::Error::invalid_length(0, &self))?;
-                let seed = SchemaDeserializer {
-                    schema: self.1,
-                    node: self.1.node(schema).map_err(A::Error::custom)?,
-                    inner: self.0,
-                };
-                seq.next_element_seed(seed)?.ok_or_else(|| {
-                    A::Error::custom("missing object data in described-elsewhere object")
-                })
-            }
+        SchemaDeserializer {
+            schema: self.1,
+            node: self.1.node(self.1.root_index).map_err(D::Error::custom)?,
+            inner: self.0,
         }
-
-        Ok(DescribedBy(
-            deserializer.deserialize_tuple(2, Visitor(self.0, self.1))?,
-            self.1,
-        ))
+        .deserialize(deserializer)
+        .map(|value| DescribedBy(value, self.1))
     }
 }
 
@@ -1115,7 +1069,7 @@ impl<'schema, InnerT> SchemaStructDeserializer<'schema, InnerT> {
             schema,
             field_names,
             field_types,
-            skip_list: dbg!(schema.field_list(skip_list).map_err(ErrorT::custom)?),
+            skip_list: schema.field_list(skip_list).map_err(ErrorT::custom)?,
             variant: 0,
             i_field: 0,
             next_value_schema: None,
@@ -1163,7 +1117,7 @@ impl<'schema, InnerT> SchemaStructDeserializer<'schema, InnerT> {
                 continue;
             }
 
-            return Ok(Some(dbg!(
+            return Ok(Some((
                 self.schema.name(name_index).map_err(ErrorT::custom)?,
                 field_type,
             )));

@@ -230,13 +230,11 @@ pub(crate) trait ReadTraceExt<'data> {
     }
 
     fn pop_name(&self) -> NameIndex {
-        self.pop_u32().try_into().expect("name index too large")
+        self.pop_u32().into()
     }
 
     fn pop_name_list(&self) -> NameListIndex {
-        self.pop_u32()
-            .try_into()
-            .expect("name list index too large")
+        self.pop_u32().into()
     }
 
     fn pop_bool(&self) -> bool {

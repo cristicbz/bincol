@@ -9,7 +9,6 @@ use crate::{
     trace::{ReadTraceExt, TraceNode},
     DescribedBy, Schema, Value,
 };
-use itertools::Itertools;
 use serde::{
     ser::{
         Error as _, SerializeMap, SerializeSeq, SerializeTuple, SerializeTupleVariant, Serializer,
@@ -28,9 +27,21 @@ where
         S: Serializer,
     {
         let mut builder = SchemaBuilder::new();
-        let value = builder.serialize_value(&self.0).map_err(S::Error::custom)?;
+        let value = builder.trace_value(&self.0).map_err(S::Error::custom)?;
         let schema = builder.build().map_err(S::Error::custom)?;
-        DescribedBy(value, &schema).serialize(serializer)
+        (&schema, DescribedBy(value, &schema)).serialize(serializer)
+    }
+}
+
+impl<'schema, 'value> Serialize for DescribedBy<'schema, &'value Value> {
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let tail = Cell::new(&*(self.0).0);
+        let cursor = ValueCursor::start(self.1, &tail);
+        cursor.serialize(serializer)
     }
 }
 
@@ -40,9 +51,7 @@ impl<'schema> Serialize for DescribedBy<'schema, Value> {
     where
         S: Serializer,
     {
-        let tail = Cell::new(&*(self.0).0);
-        let cursor = ValueCursor::start(&self.1, &tail);
-        (&self.1, ((self.1).root_index, cursor)).serialize(serializer)
+        DescribedBy(&self.0, self.1).serialize(serializer)
     }
 }
 
@@ -283,7 +292,8 @@ impl<'a> ValueCursor<'a> {
                     .unwrap()
                     .iter()
                     .map(|&node| self.traced_child(node, trace))
-                    .find_position(|child| child.check().is_some())
+                    .enumerate()
+                    .find(|(_, child)| child.check().is_some())
                     .map(|(discriminant, child)| {
                         CheckResult::Discriminated(
                             u32::try_from(discriminant).expect("too many types in union"),
@@ -435,7 +445,7 @@ fn iter_field_indices(presence: &[u8]) -> impl DoubleEndedIterator<Item = FieldI
     presence
         .chunks_exact(std::mem::size_of::<FieldIndex>())
         .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
-        .map(|index| FieldIndex::try_from(index).unwrap())
+        .map(FieldIndex::from)
 }
 
 impl Serialize for ValueCursor<'_> {

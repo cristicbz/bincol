@@ -1,6 +1,6 @@
-use bincol::SelfDescribed;
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
+use serde_describe::SelfDescribed;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct A {

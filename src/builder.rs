@@ -16,9 +16,77 @@ use serde::{
     Deserialize, Serialize,
 };
 
+/// Represents any valid serde-serialized value. Returned by [`SchemaBuilder::trace_value`].
+///
+/// Unlike e.g. `serde_json::Value`, it cannot be used by itself, it must always be used in
+/// conjunction with the resulting [`Schema`] returned by the [`SchemaBuilder::build`] method of
+/// the same [`SchemaBuilder`] used to produce the value.
 #[derive(Default, Clone)]
 pub struct Value(pub(crate) Vec<u8>);
 
+/// An in-progress schema built by successive calls to [`SchemaBuilder::trace_value`].
+///
+/// For simple use-cases, where the schema gets serialized together with data, you can use
+/// [`crate::SelfDescribed`]. If instead, you're serializing many values with similar schemas, you
+/// can use a [`SchemaBuilder`].
+///
+/// Example
+/// -------
+/// ```rust
+/// use serde::{Serialize, Deserialize, de::DeserializeSeed};
+/// use serde_describe::{SchemaBuilder, Schema, Value, DescribedBy};
+///
+/// #[derive(Debug, PartialEq, Serialize, Deserialize)]
+/// struct Type1 {
+///     a: u32,
+///     b: Type3,
+/// }
+///
+/// #[derive(Debug, PartialEq, Serialize, Deserialize)]
+/// struct Type2 {
+///     x: Vec<f32>,
+///     y: Type3,
+/// }
+///
+/// #[derive(Debug, PartialEq, Serialize, Deserialize)]
+/// struct Type3 {
+///     m: u32,
+///     n: Option<u32>,
+/// }
+///
+/// // Create some sample data to serialize
+/// let original1 = Type1 { a: 10, b: Type3 { m: 100, n: Some(200) }};
+/// let original2 = Type1 { a: 20, b: Type3 { m: 500, n: None }};
+/// let original3 = Type2 { x: vec![1.0, 2.0], y: Type3 { m: 1, n: Some(2) } };
+///
+/// // Serialize the three values, then build the schema.
+/// let mut builder = SchemaBuilder::new();
+/// let value1: Value = builder.trace_value(&original1)?;
+/// let value2 = builder.trace_value(&original2)?;
+/// let value3 = builder.trace_value(&original3)?;
+/// let schema = builder.build()?;
+///
+/// // Write different files using the same builder, then serialize the schema to its own file.
+/// std::fs::write("file1.type1", &postcard::to_stdvec(&schema.describe_value(value1))?)?;
+/// std::fs::write("file2.type1", &postcard::to_stdvec(&schema.describe_value(value2))?)?;
+/// std::fs::write("file3.type2", &postcard::to_stdvec(&schema.describe_value(value3))?)?;
+/// std::fs::write("schema", &postcard::to_stdvec(&schema)?)?;
+///
+/// // Load the schema, then read the values back.
+/// let schema: Schema = postcard::from_bytes(&std::fs::read("schema")?)?;
+/// let DescribedBy(roundtripped_value1, _) = schema.describe_type::<Type1>()
+///     .deserialize(&mut postcard::Deserializer::from_bytes(&std::fs::read("file1.type1")?))?;
+/// let DescribedBy(roundtripped_value2,_) = schema.describe_type::<Type1>()
+///     .deserialize(&mut postcard::Deserializer::from_bytes(&std::fs::read("file2.type1")?))?;
+/// let DescribedBy(roundtripped_value3,_) = schema.describe_type::<Type2>()
+///     .deserialize(&mut postcard::Deserializer::from_bytes(&std::fs::read("file3.type2")?))?;
+///
+/// assert_eq!(roundtripped_value1, original1);
+/// assert_eq!(roundtripped_value2, original2);
+/// assert_eq!(roundtripped_value3, original3);
+///
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Default, Clone)]
 pub struct SchemaBuilder {
     names: Pool<&'static str, NameIndex>,
@@ -30,11 +98,16 @@ pub struct SchemaBuilder {
 }
 
 impl SchemaBuilder {
+    /// Creates a new, empty [`SchemaBuilder`].
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn serialize_value<ValueT>(&mut self, value: &ValueT) -> Result<Value, SerError>
+    /// Converts a type that supports [`serde::Serialize`] into a [`Value`] and records its type
+    /// into the schema.
+    ///
+    /// See the top-level [`SchemaBuilder`] documentation for an example.
+    pub fn trace_value<ValueT>(&mut self, value: &ValueT) -> Result<Value, SerError>
     where
         ValueT: Serialize,
     {
@@ -51,6 +124,10 @@ impl SchemaBuilder {
         Ok(Value(data))
     }
 
+    /// Converts all the recorded value types into a schema that can be used to serialize the
+    /// [`Value`]-s returned by [`Self::trace_value`].
+    ///
+    /// See the top-level [`SchemaBuilder`] documentation for an example.
     pub fn build(mut self) -> Result<Schema, SerError> {
         let schema = Schema {
             root_index: std::mem::take(&mut self.root).build(&mut self)?,
@@ -65,7 +142,7 @@ impl SchemaBuilder {
             node_lists: self.node_lists.into_iter().collect::<Vec<_>>().into(),
             field_lists: self.field_lists.into_iter().collect::<Vec<_>>().into(),
         };
-        schema.dump(&mut String::new(), schema.root_index).unwrap();
+        eprintln!("SCHEMA:\n{}\n\n", schema.dump());
         Ok(schema)
     }
 }
@@ -83,12 +160,12 @@ impl RootSerializer<'_> {
     #[inline]
     fn reborrow<'b>(&'b mut self) -> RootSerializer<'b> where {
         RootSerializer {
-            data: &mut self.data,
-            names: &mut self.names,
-            name_lists: &mut self.name_lists,
-            schemas: &mut self.schemas,
-            schema_lists: &mut self.schema_lists,
-            field_lists: &mut self.field_lists,
+            data: self.data,
+            names: self.names,
+            name_lists: self.name_lists,
+            schemas: self.schemas,
+            schema_lists: self.schema_lists,
+            field_lists: self.field_lists,
         }
     }
 
@@ -731,17 +808,13 @@ impl<'a> SerializeSeq for SequenceSchemaBuilder<'a> {
     type Error = SerError;
 
     #[inline]
-    fn serialize_element<'b, T>(&'b mut self, value: &T) -> Result<(), Self::Error>
+    fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
         T: ?Sized + serde::Serialize,
     {
         self.length += 1;
-        let new_schema = {
-            let parent = self.parent.reborrow();
-            let new_schema = T::serialize(value, parent)?;
-            new_schema
-        };
-        self.item.union(new_schema);
+        self.item
+            .union(T::serialize(value, self.parent.reborrow())?);
         Ok(())
     }
 
