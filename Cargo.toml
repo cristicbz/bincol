@@ -1,7 +1,13 @@
 [package]
 name = "serde_describe"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
+description = "Wrappers to make non-self-describing serde formats behave as if they were self-describing."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/cristicbz/serde_describe"
+authors = ["Cristi Cobzarenco <cristi.cobzarenco@gmail.com>"]
+categories = ["encoding"]
+keywords = ["serde_describe", "serde", "serialization", "self-describing", "format"]
 
 [dependencies]
 indexmap = { version = "2.12.1" }
