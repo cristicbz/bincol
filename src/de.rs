@@ -1,14 +1,15 @@
 use serde::{
+    Deserialize,
     de::{
         DeserializeSeed, Deserializer, EnumAccess, Error as _, Expected, IgnoredAny, MapAccess,
         SeqAccess, Unexpected, VariantAccess,
     },
-    Deserialize,
 };
 use std::marker::PhantomData;
 
 use crate::{
-    anonymous_union::{deserialized_anonymous_variants, UNION_ENUM_NAME},
+    Schema,
+    anonymous_union::{UNION_ENUM_NAME, deserialized_anonymous_variants},
     deferred::{self, CallResult, CallValue, CanonicalVisit, DeferredDeserialize},
     described::{DescribedBy, SelfDescribed},
     indices::{
@@ -16,7 +17,6 @@ use crate::{
         SchemaNodeListIndex,
     },
     schema::SchemaNode,
-    Schema,
 };
 
 impl<'de, T> Deserialize<'de> for SelfDescribed<T>

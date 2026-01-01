@@ -1,25 +1,25 @@
-use serde::{de::DeserializeSeed, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeSeed};
 use std::{hash::Hash, marker::PhantomData};
 use thiserror::Error;
 
 use crate::{
-    builder::Value,
+    DescribedBy,
     indices::{
         FieldNameIndex, FieldNameListIndex, IndexIsEmpty, IsEmpty, MemberIndex, MemberListIndex,
         SchemaNodeIndex, SchemaNodeListIndex, TypeNameIndex, VariantNameIndex,
     },
     pool::{ReadonlyNonEmptyPool, ReadonlyPool},
-    DescribedBy,
+    trace::Trace,
 };
 
 /// A saved schema that describes serialized data in a non-self-describing format.
 ///
-/// Produced via a [`crate::SchemaBuilder`] which traces the various serialized types, see that
+/// Produced via a [`SchemaBuilder`][`crate::SchemaBuilder`] which traces the various serialized types, see that
 /// type's documentation for a complete example.
 ///
 /// For simple use-cases where the [`Schema`] should be serialized together with the data, use
-/// the [`crate::SelfDescribed`] wrapper, which obviates the need for an explicitly exposed
-/// [`Schema`] object.
+/// the [`SelfDescribed`][`crate::SelfDescribed`] wrapper, which obviates the need for an
+/// explicitly managed [`Schema`] object.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Schema {
     pub(crate) root_index: SchemaNodeIndex,
@@ -44,22 +44,23 @@ impl Schema {
         DescribedBy(PhantomData, self)
     }
 
-    /// Returns a [`serde::Serialize`]-able wrapper for a [`crate::Value`].
+    /// Returns a [`serde::Serialize`]-able wrapper for a [`Trace`][`crate::Trace`].
     ///
     /// You will need to provide the schema again at deserialization-time using
     /// [`Self::describe_type`] or [`Self::describe_seed`].
-    pub fn describe_value<'schema>(&'schema self, value: Value) -> DescribedBy<'schema, Value> {
-        DescribedBy(value, self)
+    pub fn describe_trace<'schema>(&'schema self, trace: Trace) -> DescribedBy<'schema, Trace> {
+        DescribedBy(trace, self)
     }
 
-    /// Returns a [`serde::Serialize`]-able wrapper for a reference to a [`crate::Value`]..
+    /// Returns a [`serde::Serialize`]-able wrapper for a reference to a
+    /// [`Trace`][`crate::Trace`].
     ///
     /// You will need to provide the schema again at deserialization-time using
     /// [`Self::describe_type`] or [`Self::describe_seed`].
-    pub fn describe_value_ref<'schema, 'value>(
+    pub fn describe_trace_ref<'schema, 'trace>(
         &'schema self,
-        value: &'value Value,
-    ) -> DescribedBy<'schema, &'value Value> {
+        value: &'trace Trace,
+    ) -> DescribedBy<'schema, &'trace Trace> {
         DescribedBy(value, self)
     }
 
@@ -90,11 +91,11 @@ impl Schema {
     /// }
     ///
     /// let mut builder = SchemaBuilder::new();
-    /// let value = builder.trace_value(&10u32)?;
+    /// let trace = builder.trace(&10u32)?;
     /// let schema = builder.build()?;
     ///
     /// let serialized = postcard::to_stdvec(
-    ///     &schema.describe_value(value)
+    ///     &schema.describe_trace(trace)
     /// )?;
     /// let DescribedBy(deserialized, _) = schema
     ///     .describe_seed(Multiplier { by: 2 })

@@ -14,14 +14,15 @@ pub(crate) mod schema;
 pub(crate) mod ser;
 pub(crate) mod trace;
 
-pub use builder::{SchemaBuilder, Value};
+pub use builder::SchemaBuilder;
 pub use described::{DescribedBy, SelfDescribed};
 pub use schema::Schema;
+pub use trace::Trace;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{de::DeserializeOwned, Deserialize, Serialize};
+    use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
     fn if_zero(value: &u32) -> bool {
         *value == 0

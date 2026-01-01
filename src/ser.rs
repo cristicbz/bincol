@@ -1,5 +1,6 @@
 use crate::{
-    anonymous_union::{serialized_anonymous_variant, UNION_ENUM_NAME},
+    DescribedBy, Schema, Trace,
+    anonymous_union::{UNION_ENUM_NAME, serialized_anonymous_variant},
     builder::SchemaBuilder,
     described::SelfDescribed,
     indices::{
@@ -8,13 +9,12 @@ use crate::{
     },
     schema::SchemaNode,
     trace::{ReadTraceExt, TraceNode},
-    DescribedBy, Schema, Value,
 };
 use serde::{
+    Serialize,
     ser::{
         Error as _, SerializeMap, SerializeSeq, SerializeTuple, SerializeTupleVariant, Serializer,
     },
-    Serialize,
 };
 use std::{cell::Cell, fmt::Debug};
 
@@ -28,25 +28,25 @@ where
         S: Serializer,
     {
         let mut builder = SchemaBuilder::new();
-        let value = builder.trace_value(&self.0).map_err(S::Error::custom)?;
+        let trace = builder.trace(&self.0).map_err(S::Error::custom)?;
         let schema = builder.build().map_err(S::Error::custom)?;
-        (&schema, DescribedBy(value, &schema)).serialize(serializer)
+        (&schema, DescribedBy(trace, &schema)).serialize(serializer)
     }
 }
 
-impl<'schema, 'value> Serialize for DescribedBy<'schema, &'value Value> {
+impl<'schema, 'trace> Serialize for DescribedBy<'schema, &'trace Trace> {
     #[inline]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let tail = Cell::new(&*(self.0).0);
-        let cursor = ValueCursor::start(self.1, &tail);
+        let cursor = TraceCursor::start(self.1, &tail);
         cursor.serialize(serializer)
     }
 }
 
-impl<'schema> Serialize for DescribedBy<'schema, Value> {
+impl<'schema> Serialize for DescribedBy<'schema, Trace> {
     #[inline]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -57,7 +57,7 @@ impl<'schema> Serialize for DescribedBy<'schema, Value> {
 }
 
 #[derive(Copy, Clone)]
-struct ValueCursor<'a> {
+struct TraceCursor<'a> {
     schema: &'a Schema,
     node: SchemaNode,
     trace: TraceNode,
@@ -68,7 +68,7 @@ struct ValueCursor<'a> {
 #[derive(Copy, Clone)]
 enum CheckResult<'a> {
     Simple,
-    Discriminated(u32, ValueCursor<'a>),
+    Discriminated(u32, TraceCursor<'a>),
 }
 
 impl Debug for CheckResult<'_> {
@@ -84,7 +84,7 @@ impl Debug for CheckResult<'_> {
     }
 }
 
-impl<'a> ValueCursor<'a> {
+impl<'a> TraceCursor<'a> {
     #[inline]
     fn start(schema: &'a Schema, tail: &'a Cell<&'a [u8]>) -> Self {
         Self {
@@ -378,7 +378,7 @@ impl<'a> ValueCursor<'a> {
 }
 
 struct SkippableStructSerializer<'a, 'v> {
-    cursor: &'v ValueCursor<'a>,
+    cursor: &'v TraceCursor<'a>,
     presence: &'a [u8],
     variant: u64,
     name_list: &'a [FieldNameIndex],
@@ -449,7 +449,7 @@ fn iter_field_indices(presence: &[u8]) -> impl DoubleEndedIterator<Item = Member
         .map(MemberIndex::from)
 }
 
-impl Serialize for ValueCursor<'_> {
+impl Serialize for TraceCursor<'_> {
     #[inline]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

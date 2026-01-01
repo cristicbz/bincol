@@ -46,9 +46,19 @@ pub(crate) enum TraceNode {
     StructVariant(TypeNameIndex, VariantNameIndex, FieldNameListIndex),
 }
 
+/// Represents a traced serde-serialized value. Returned by
+/// [`SchemaBuilder::trace`][`crate::SchemaBuilder::trace`].
+///
+/// Unlike e.g. `serde_json::Value`, it cannot be used by itself, it must always be used in
+/// conjunction with the resulting [`Schema`][`crate::Schema`] returned by the
+/// [`SchemaBuilder::build`][`crate::SchemaBuilder::build`] method of the same
+/// [`SchemaBuilder`][`crate::SchemaBuilder`] used to produce the value.
+#[derive(Default, Clone)]
+pub struct Trace(pub(crate) Vec<u8>);
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
 #[repr(u8)]
-pub enum Trace {
+pub enum TraceNodeKind {
     Bool = 0,
 
     I8,
@@ -91,7 +101,7 @@ pub enum Trace {
     StructVariant,
 }
 
-impl Trace {
+impl TraceNodeKind {
     const ALL: [Self; 30] = [
         Self::Bool,
         Self::I8,
@@ -126,7 +136,7 @@ impl Trace {
     ];
 }
 
-impl TryFrom<u8> for Trace {
+impl TryFrom<u8> for TraceNodeKind {
     type Error = u8;
 
     #[inline]
@@ -135,9 +145,9 @@ impl TryFrom<u8> for Trace {
     }
 }
 
-impl From<Trace> for u8 {
+impl From<TraceNodeKind> for u8 {
     #[inline]
-    fn from(value: Trace) -> Self {
+    fn from(value: TraceNodeKind) -> Self {
         value as Self
     }
 }
@@ -183,53 +193,57 @@ pub(crate) trait ReadTraceExt<'data> {
     }
 
     fn pop_trace_node(&self) -> TraceNode {
-        let trace = Trace::try_from(self.pop_u8()).expect("invalid trace");
+        let trace = TraceNodeKind::try_from(self.pop_u8()).expect("invalid trace");
         match trace {
-            Trace::Bool => TraceNode::Bool,
-            Trace::I8 => TraceNode::I8,
-            Trace::I16 => TraceNode::I16,
-            Trace::I32 => TraceNode::I32,
-            Trace::I64 => TraceNode::I64,
-            Trace::I128 => TraceNode::I128,
-            Trace::U8 => TraceNode::U8,
-            Trace::U16 => TraceNode::U16,
-            Trace::U32 => TraceNode::U32,
-            Trace::U64 => TraceNode::U64,
-            Trace::U128 => TraceNode::U128,
-            Trace::F32 => TraceNode::F32,
-            Trace::F64 => TraceNode::F64,
-            Trace::Char => TraceNode::Char,
-            Trace::String => TraceNode::String,
-            Trace::Bytes => TraceNode::Bytes,
+            TraceNodeKind::Bool => TraceNode::Bool,
+            TraceNodeKind::I8 => TraceNode::I8,
+            TraceNodeKind::I16 => TraceNode::I16,
+            TraceNodeKind::I32 => TraceNode::I32,
+            TraceNodeKind::I64 => TraceNode::I64,
+            TraceNodeKind::I128 => TraceNode::I128,
+            TraceNodeKind::U8 => TraceNode::U8,
+            TraceNodeKind::U16 => TraceNode::U16,
+            TraceNodeKind::U32 => TraceNode::U32,
+            TraceNodeKind::U64 => TraceNode::U64,
+            TraceNodeKind::U128 => TraceNode::U128,
+            TraceNodeKind::F32 => TraceNode::F32,
+            TraceNodeKind::F64 => TraceNode::F64,
+            TraceNodeKind::Char => TraceNode::Char,
+            TraceNodeKind::String => TraceNode::String,
+            TraceNodeKind::Bytes => TraceNode::Bytes,
 
-            Trace::OptionNone => TraceNode::None,
-            Trace::OptionSome => TraceNode::Some,
+            TraceNodeKind::OptionNone => TraceNode::None,
+            TraceNodeKind::OptionSome => TraceNode::Some,
 
-            Trace::Unit => TraceNode::Unit,
+            TraceNodeKind::Unit => TraceNode::Unit,
 
-            Trace::UnitStruct => TraceNode::UnitStruct(self.pop_type_name()),
-            Trace::UnitVariant => {
+            TraceNodeKind::UnitStruct => TraceNode::UnitStruct(self.pop_type_name()),
+            TraceNodeKind::UnitVariant => {
                 TraceNode::UnitVariant(self.pop_type_name(), self.pop_variant_name())
             }
 
-            Trace::NewtypeStruct => TraceNode::NewtypeStruct(self.pop_type_name()),
-            Trace::NewtypeVariant => {
+            TraceNodeKind::NewtypeStruct => TraceNode::NewtypeStruct(self.pop_type_name()),
+            TraceNodeKind::NewtypeVariant => {
                 TraceNode::NewtypeVariant(self.pop_type_name(), self.pop_variant_name())
             }
 
-            Trace::Map => TraceNode::Map,
-            Trace::Sequence => TraceNode::Sequence,
+            TraceNodeKind::Map => TraceNode::Map,
+            TraceNodeKind::Sequence => TraceNode::Sequence,
 
-            Trace::Tuple => TraceNode::Tuple(self.pop_u32()),
-            Trace::TupleStruct => TraceNode::TupleStruct(self.pop_u32(), self.pop_type_name()),
-            Trace::TupleVariant => TraceNode::TupleVariant(
+            TraceNodeKind::Tuple => TraceNode::Tuple(self.pop_u32()),
+            TraceNodeKind::TupleStruct => {
+                TraceNode::TupleStruct(self.pop_u32(), self.pop_type_name())
+            }
+            TraceNodeKind::TupleVariant => TraceNode::TupleVariant(
                 self.pop_u32(),
                 self.pop_type_name(),
                 self.pop_variant_name(),
             ),
 
-            Trace::Struct => TraceNode::Struct(self.pop_type_name(), self.pop_field_name_list()),
-            Trace::StructVariant => TraceNode::StructVariant(
+            TraceNodeKind::Struct => {
+                TraceNode::Struct(self.pop_type_name(), self.pop_field_name_list())
+            }
+            TraceNodeKind::StructVariant => TraceNode::StructVariant(
                 self.pop_type_name(),
                 self.pop_variant_name(),
                 self.pop_field_name_list(),

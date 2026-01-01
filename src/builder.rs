@@ -6,35 +6,27 @@ use crate::{
     },
     pool::{NonEmptyPool, Pool},
     schema::{Schema, SchemaNode},
-    trace::Trace,
+    trace::{Trace, TraceNodeKind},
 };
 use serde::{
+    Deserialize, Serialize,
     ser::{
         SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,
         SerializeTupleStruct, SerializeTupleVariant, Serializer,
     },
-    Deserialize, Serialize,
 };
 
-/// Represents any valid serde-serialized value. Returned by [`SchemaBuilder::trace_value`].
-///
-/// Unlike e.g. `serde_json::Value`, it cannot be used by itself, it must always be used in
-/// conjunction with the resulting [`Schema`] returned by the [`SchemaBuilder::build`] method of
-/// the same [`SchemaBuilder`] used to produce the value.
-#[derive(Default, Clone)]
-pub struct Value(pub(crate) Vec<u8>);
-
-/// An in-progress schema built by successive calls to [`SchemaBuilder::trace_value`].
+/// An in-progress schema built by successive calls to [`SchemaBuilder::trace`].
 ///
 /// For simple use-cases, where the schema gets serialized together with data, you can use
-/// [`crate::SelfDescribed`]. If instead, you're serializing many values with similar schemas, you
-/// can use a [`SchemaBuilder`].
+/// [`SelfDescribed`][`crate::SelfDescribed`]. If instead, you're serializing many values with
+/// similar schemas, you can use a [`SchemaBuilder`].
 ///
 /// Example
 /// -------
 /// ```rust
 /// use serde::{Serialize, Deserialize, de::DeserializeSeed};
-/// use serde_describe::{SchemaBuilder, Schema, Value, DescribedBy};
+/// use serde_describe::{SchemaBuilder, Schema, Trace, DescribedBy};
 ///
 /// #[derive(Debug, PartialEq, Serialize, Deserialize)]
 /// struct Type1 {
@@ -61,15 +53,15 @@ pub struct Value(pub(crate) Vec<u8>);
 ///
 /// // Serialize the three values, then build the schema.
 /// let mut builder = SchemaBuilder::new();
-/// let value1: Value = builder.trace_value(&original1)?;
-/// let value2 = builder.trace_value(&original2)?;
-/// let value3 = builder.trace_value(&original3)?;
+/// let trace1: Trace = builder.trace(&original1)?;
+/// let trace2 = builder.trace(&original2)?;
+/// let trace3 = builder.trace(&original3)?;
 /// let schema = builder.build()?;
 ///
 /// // Write different files using the same builder, then serialize the schema to its own file.
-/// std::fs::write("file1.type1", &postcard::to_stdvec(&schema.describe_value(value1))?)?;
-/// std::fs::write("file2.type1", &postcard::to_stdvec(&schema.describe_value(value2))?)?;
-/// std::fs::write("file3.type2", &postcard::to_stdvec(&schema.describe_value(value3))?)?;
+/// std::fs::write("file1.type1", &postcard::to_stdvec(&schema.describe_trace(trace1))?)?;
+/// std::fs::write("file2.type1", &postcard::to_stdvec(&schema.describe_trace(trace2))?)?;
+/// std::fs::write("file3.type2", &postcard::to_stdvec(&schema.describe_trace(trace3))?)?;
 /// std::fs::write("schema", &postcard::to_stdvec(&schema)?)?;
 ///
 /// // Load the schema, then read the values back.
@@ -109,11 +101,11 @@ impl SchemaBuilder {
         Self::default()
     }
 
-    /// Converts a type that supports [`serde::Serialize`] into a [`Value`] and records its type
+    /// Converts a type that supports [`serde::Serialize`] into a [`Trace`] and records its type
     /// into the schema.
     ///
     /// See the top-level [`SchemaBuilder`] documentation for an example.
-    pub fn trace_value<ValueT>(&mut self, value: &ValueT) -> Result<Value, SerError>
+    pub fn trace<ValueT>(&mut self, value: &ValueT) -> Result<Trace, SerError>
     where
         ValueT: Serialize,
     {
@@ -129,11 +121,11 @@ impl SchemaBuilder {
             type_names: &mut self.type_names,
         })?;
         self.root.union(new_root);
-        Ok(Value(data))
+        Ok(Trace(data))
     }
 
     /// Converts all the recorded value types into a schema that can be used to serialize the
-    /// [`Value`]-s returned by [`Self::trace_value`].
+    /// [`Trace`]-s returned by [`trace`][`Self::trace`].
     ///
     /// See the top-level [`SchemaBuilder`] documentation for an example.
     pub fn build(mut self) -> Result<Schema, SerError> {
@@ -229,7 +221,7 @@ impl RootSerializer<'_> {
     }
 
     #[inline]
-    fn push_trace(&mut self, trace: Trace) {
+    fn push_trace(&mut self, trace: TraceNodeKind) {
         self.data.push(trace.into());
     }
 
@@ -556,7 +548,7 @@ macro_rules! fn_serialize_as_u8 {
         $(
             #[inline]
             fn $fn_name(mut self, value: $value_type) -> Result<Self::Ok, Self::Error> {
-                self.push_trace(Trace::$node);
+                self.push_trace(TraceNodeKind::$node);
                 self.data.push(value as u8);
                 Ok(SchemaBuilderNode::$node)
             }
@@ -570,7 +562,7 @@ macro_rules! fn_serialize_as_le_bytes {
             #[inline]
             fn $fn_name(mut self, value: $value_type) -> Result<Self::Ok, Self::Error> {
 
-                self.push_trace(Trace::$node);
+                self.push_trace(TraceNodeKind::$node);
                 self.data.extend_from_slice(&value.to_le_bytes());
                 Ok(SchemaBuilderNode::$node)
             }
@@ -611,28 +603,28 @@ impl<'a> Serializer for RootSerializer<'a> {
 
     #[inline]
     fn serialize_char(mut self, value: char) -> Result<Self::Ok, Self::Error> {
-        self.push_trace(Trace::Char);
+        self.push_trace(TraceNodeKind::Char);
         self.push_u32(u32::from(value));
         Ok(SchemaBuilderNode::Char)
     }
 
     #[inline]
     fn serialize_str(mut self, value: &str) -> Result<Self::Ok, Self::Error> {
-        self.push_trace(Trace::String);
+        self.push_trace(TraceNodeKind::String);
         self.push_length_bytes(value.as_bytes())?;
         Ok(SchemaBuilderNode::String)
     }
 
     #[inline]
     fn serialize_bytes(mut self, value: &[u8]) -> Result<Self::Ok, Self::Error> {
-        self.push_trace(Trace::Bytes);
+        self.push_trace(TraceNodeKind::Bytes);
         self.push_length_bytes(value)?;
         Ok(SchemaBuilderNode::Bytes)
     }
 
     #[inline]
     fn serialize_none(mut self) -> Result<Self::Ok, Self::Error> {
-        self.push_trace(Trace::OptionNone);
+        self.push_trace(TraceNodeKind::OptionNone);
         Ok(SchemaBuilderNode::OptionNone)
     }
 
@@ -641,19 +633,19 @@ impl<'a> Serializer for RootSerializer<'a> {
     where
         T: ?Sized + Serialize,
     {
-        self.push_trace(Trace::OptionSome);
+        self.push_trace(TraceNodeKind::OptionSome);
         T::serialize(value, self).map(|inner| SchemaBuilderNode::OptionSome(Box::new(inner)))
     }
 
     #[inline]
     fn serialize_unit(mut self) -> Result<Self::Ok, Self::Error> {
-        self.push_trace(Trace::Unit);
+        self.push_trace(TraceNodeKind::Unit);
         Ok(SchemaBuilderNode::Unit(None))
     }
 
     #[inline]
     fn serialize_unit_struct(mut self, name: &'static str) -> Result<Self::Ok, Self::Error> {
-        self.push_trace(Trace::UnitStruct);
+        self.push_trace(TraceNodeKind::UnitStruct);
         Ok(SchemaBuilderNode::Unit(Some(self.push_struct_name(name)?)))
     }
 
@@ -664,7 +656,7 @@ impl<'a> Serializer for RootSerializer<'a> {
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        self.push_trace(Trace::UnitVariant);
+        self.push_trace(TraceNodeKind::UnitVariant);
         Ok(SchemaBuilderNode::Unit(Some(
             self.push_variant_name(name, variant)?,
         )))
@@ -679,7 +671,7 @@ impl<'a> Serializer for RootSerializer<'a> {
     where
         T: ?Sized + Serialize,
     {
-        self.push_trace(Trace::NewtypeStruct);
+        self.push_trace(TraceNodeKind::NewtypeStruct);
         Ok(SchemaBuilderNode::Newtype(
             self.push_struct_name(name)?,
             Box::new(T::serialize(value, self)?),
@@ -697,7 +689,7 @@ impl<'a> Serializer for RootSerializer<'a> {
     where
         T: ?Sized + Serialize,
     {
-        self.push_trace(Trace::NewtypeVariant);
+        self.push_trace(TraceNodeKind::NewtypeVariant);
         Ok(SchemaBuilderNode::Newtype(
             self.push_variant_name(name, variant)?,
             Box::new(T::serialize(value, self)?),
@@ -706,7 +698,7 @@ impl<'a> Serializer for RootSerializer<'a> {
 
     #[inline]
     fn serialize_seq(mut self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        self.push_trace(Trace::Sequence);
+        self.push_trace(TraceNodeKind::Sequence);
         Ok(SequenceSchemaBuilder {
             reserved_length: self.reserve_u32()?,
             item: SchemaBuilderNode::default(),
@@ -717,7 +709,7 @@ impl<'a> Serializer for RootSerializer<'a> {
 
     #[inline]
     fn serialize_tuple(mut self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        self.push_trace(Trace::Tuple);
+        self.push_trace(TraceNodeKind::Tuple);
         self.push_u32_length(len)?;
         Ok(TupleSchemaBuilder {
             name: None,
@@ -733,7 +725,7 @@ impl<'a> Serializer for RootSerializer<'a> {
         name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        self.push_trace(Trace::TupleStruct);
+        self.push_trace(TraceNodeKind::TupleStruct);
         self.push_u32_length(len)?;
         Ok(TupleSchemaBuilder {
             name: Some(self.push_struct_name(name)?),
@@ -751,7 +743,7 @@ impl<'a> Serializer for RootSerializer<'a> {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        self.push_trace(Trace::TupleVariant);
+        self.push_trace(TraceNodeKind::TupleVariant);
         self.push_u32_length(len)?;
         Ok(TupleSchemaBuilder {
             name: Some(self.push_variant_name(name, variant)?),
@@ -763,7 +755,7 @@ impl<'a> Serializer for RootSerializer<'a> {
 
     #[inline]
     fn serialize_map(mut self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        self.push_trace(Trace::Map);
+        self.push_trace(TraceNodeKind::Map);
         Ok(MapSchemaBuilder {
             reserved_length: self.reserve_u32()?,
             key_schema: SchemaBuilderNode::default(),
@@ -779,7 +771,7 @@ impl<'a> Serializer for RootSerializer<'a> {
         name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        self.push_trace(Trace::Struct);
+        self.push_trace(TraceNodeKind::Struct);
         StructSchemaBuilder::new(self.push_struct_name(name)?, len, self)
     }
 
@@ -791,7 +783,7 @@ impl<'a> Serializer for RootSerializer<'a> {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        self.push_trace(Trace::StructVariant);
+        self.push_trace(TraceNodeKind::StructVariant);
         StructSchemaBuilder::new(self.push_variant_name(name, variant)?, len, self)
     }
 

@@ -95,7 +95,7 @@ pub struct SelfDescribed<T>(pub T);
 /// Wraps a serializable and/or deserializable type together with a reference to a [`Schema`].
 ///
 /// This object is most conveniently constructed by [`Schema::describe_type`],
-/// [`Schema::describe_seed`] or [`Schema::describe_value`].
+/// [`Schema::describe_seed`] or [`Schema::describe_trace`].
 ///
 /// The resulting object is serialized WITHOUT the schema. The schema will need to be saved
 /// separately and provided at deserialization time as a seed. See [`crate::SchemaBuilder`] for a
