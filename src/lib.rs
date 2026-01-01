@@ -16,14 +16,13 @@ pub(crate) mod de;
 pub(crate) mod deferred;
 pub(crate) mod described;
 pub(crate) mod dump;
-pub(crate) mod errors;
 pub(crate) mod indices;
 pub(crate) mod pool;
 pub(crate) mod schema;
 pub(crate) mod ser;
 pub(crate) mod trace;
 
-pub use builder::SchemaBuilder;
+pub use builder::{SchemaBuilder, TraceError};
 pub use described::{DescribedBy, SelfDescribed};
 pub use schema::Schema;
 pub use trace::Trace;

@@ -1,5 +1,4 @@
 use crate::{
-    errors::SerError,
     indices::{
         FieldNameIndex, FieldNameListIndex, MemberIndex, MemberListIndex, SchemaNodeIndex,
         SchemaNodeListIndex, TraceIndex, TypeName, TypeNameIndex, VariantNameIndex,
@@ -15,6 +14,7 @@ use serde::{
         SerializeTupleStruct, SerializeTupleVariant, Serializer,
     },
 };
+use thiserror::Error;
 
 /// An in-progress schema built by successive calls to [`SchemaBuilder::trace`].
 ///
@@ -105,7 +105,7 @@ impl SchemaBuilder {
     /// into the schema.
     ///
     /// See the top-level [`SchemaBuilder`] documentation for an example.
-    pub fn trace<ValueT>(&mut self, value: &ValueT) -> Result<Trace, SerError>
+    pub fn trace<ValueT>(&mut self, value: &ValueT) -> Result<Trace, TraceError>
     where
         ValueT: Serialize,
     {
@@ -128,7 +128,7 @@ impl SchemaBuilder {
     /// [`Trace`]-s returned by [`trace`][`Self::trace`].
     ///
     /// See the top-level [`SchemaBuilder`] documentation for an example.
-    pub fn build(mut self) -> Result<Schema, SerError> {
+    pub fn build(mut self) -> Result<Schema, TraceError> {
         let schema = Schema {
             root_index: std::mem::take(&mut self.root).build(&mut self)?,
             nodes: self.nodes.into(),
@@ -140,6 +140,73 @@ impl SchemaBuilder {
             type_names: self.type_names.into(),
         };
         Ok(schema)
+    }
+}
+
+/// Errors returned by tracing values.
+#[derive(Debug, Error)]
+#[error("tracing limits exceeded: {0}")]
+#[non_exhaustive]
+pub enum TraceError {
+    /// The value is in some way too large, and built-in limits were exceeded.
+    Limit(TraceLimitError),
+
+    /// Custom serde serialization error.
+    #[error("custom serialization error: {0}")]
+    Custom(Box<str>),
+}
+
+impl From<TraceLimitErrorKind> for TraceError {
+    fn from(kind: TraceLimitErrorKind) -> Self {
+        Self::Limit(kind.into())
+    }
+}
+
+/// Errors caused by tracing a value that is in some way too large.
+#[derive(Debug, Error)]
+#[error("tracing limits exceeded: {0}")]
+pub struct TraceLimitError(#[from] TraceLimitErrorKind);
+
+pub(crate) const MAX_SKIPPABLE_FIELDS: usize = 64;
+pub(crate) const MAX_UNION_VARIANTS: usize = 256;
+
+#[derive(Debug, Error)]
+pub(crate) enum TraceLimitErrorKind {
+    #[error("too many schema nodes for u32")]
+    SchemaNodes,
+
+    #[error("too many schema node lists for u32")]
+    SchemaNodeLists,
+
+    #[error("too many struct members for u32")]
+    Members,
+
+    #[error("too many struct member lists for u32")]
+    MemberLists,
+
+    #[error("too many struct/variant/field names for u32")]
+    Names,
+
+    #[error("too many field lists for u32")]
+    FieldNameLists,
+
+    #[error("too many values for u32")]
+    Values,
+
+    #[error("too many variants")]
+    UnionVariants,
+
+    #[error("too many skippable fields")]
+    SkippableFields,
+}
+
+impl serde::ser::Error for TraceError {
+    #[inline]
+    fn custom<T>(msg: T) -> Self
+    where
+        T: std::fmt::Display,
+    {
+        TraceError::Custom(msg.to_string().into())
     }
 }
 
@@ -170,7 +237,7 @@ impl RootSerializer<'_> {
     }
 
     #[inline]
-    fn push_struct_name(&mut self, name: &'static str) -> Result<TypeName, SerError> {
+    fn push_struct_name(&mut self, name: &'static str) -> Result<TypeName, TraceLimitErrorKind> {
         let name = self.type_names.intern(name)?;
         self.push_u32(name.into());
         Ok(TypeName(name, None))
@@ -181,7 +248,7 @@ impl RootSerializer<'_> {
         &mut self,
         name: &'static str,
         variant: &'static str,
-    ) -> Result<TypeName, SerError> {
+    ) -> Result<TypeName, TraceLimitErrorKind> {
         let name = self.type_names.intern(name)?;
         let variant = self.variant_names.intern(variant)?;
         self.push_u32(name.into());
@@ -190,7 +257,10 @@ impl RootSerializer<'_> {
     }
 
     #[inline]
-    fn intern_field_name(&mut self, name: &'static str) -> Result<FieldNameIndex, SerError> {
+    fn intern_field_name(
+        &mut self,
+        name: &'static str,
+    ) -> Result<FieldNameIndex, TraceLimitErrorKind> {
         self.field_names.intern(name)
     }
 
@@ -199,7 +269,7 @@ impl RootSerializer<'_> {
         &mut self,
         index: TraceIndex,
         names: Vec<FieldNameIndex>,
-    ) -> Result<FieldNameListIndex, SerError> {
+    ) -> Result<FieldNameListIndex, TraceLimitErrorKind> {
         let names = self.field_name_lists.intern_from(names)?;
         self.fill_reserved_bytes(index, &u32::from(names).to_le_bytes());
         Ok(names)
@@ -211,10 +281,10 @@ impl RootSerializer<'_> {
     }
 
     #[inline]
-    fn push_u32_length(&mut self, length: usize) -> Result<(), SerError> {
+    fn push_u32_length(&mut self, length: usize) -> Result<(), TraceLimitErrorKind> {
         self.data.extend(
             u32::try_from(length)
-                .map_err(|_| SerError::TooManyValues)?
+                .map_err(|_| TraceLimitErrorKind::Values)?
                 .to_le_bytes(),
         );
         Ok(())
@@ -226,24 +296,24 @@ impl RootSerializer<'_> {
     }
 
     #[inline]
-    fn reserve_u32(&mut self) -> Result<TraceIndex, SerError> {
+    fn reserve_u32(&mut self) -> Result<TraceIndex, TraceLimitErrorKind> {
         self.reserve_bytes(std::mem::size_of::<u32>())
     }
 
     #[inline]
-    fn reserve_field_presence(&mut self, length: usize) -> Result<TraceIndex, SerError> {
+    fn reserve_field_presence(&mut self, length: usize) -> Result<TraceIndex, TraceLimitErrorKind> {
         self.reserve_bytes(std::mem::size_of::<u32>() * length)
     }
 
     #[inline]
-    fn reserve_bytes(&mut self, size: usize) -> Result<TraceIndex, SerError> {
+    fn reserve_bytes(&mut self, size: usize) -> Result<TraceIndex, TraceLimitErrorKind> {
         let index = TraceIndex::try_from(self.data.len())?;
         self.data.extend(std::iter::repeat_n(!0, size));
         Ok(index)
     }
 
     #[inline]
-    fn push_length_bytes(&mut self, bytes: &[u8]) -> Result<(), SerError> {
+    fn push_length_bytes(&mut self, bytes: &[u8]) -> Result<(), TraceLimitErrorKind> {
         self.push_u32_length(bytes.len())?;
         self.data.extend(bytes);
         Ok(())
@@ -259,7 +329,7 @@ impl RootSerializer<'_> {
         &mut self,
         index: TraceIndex,
         field: MemberIndex,
-    ) -> Result<TraceIndex, SerError> {
+    ) -> Result<TraceIndex, TraceLimitErrorKind> {
         self.fill_reserved_bytes(index, &u32::from(field).to_le_bytes());
         TraceIndex::try_from(usize::from(index) + std::mem::size_of::<u32>())
     }
@@ -305,7 +375,6 @@ pub(crate) enum SchemaBuilderNode {
         field_names: Option<FieldNameListIndex>,
         field_types: Vec<SchemaBuilderNode>,
         skippable: Vec<MemberIndex>,
-        length: u32,
     },
 }
 
@@ -345,18 +414,16 @@ impl SchemaBuilderNode {
                     field_names: left_field_names,
                     field_types: left_field_types,
                     skippable: left_skippable,
-                    length: left_length,
                 },
                 SchemaBuilderNode::Record {
                     name: right_name,
                     field_names: right_field_names,
                     field_types: right_field_types,
                     skippable: right_skippable,
-                    length: right_length,
                 },
             ) => {
-                if (*left_name, *left_field_names, *left_length)
-                    == (right_name, right_field_names, right_length)
+                if (*left_name, *left_field_names, left_field_types.len())
+                    == (right_name, right_field_names, right_field_types.len())
                 {
                     left_field_types
                         .iter_mut()
@@ -372,7 +439,6 @@ impl SchemaBuilderNode {
                         field_names: right_field_names,
                         field_types: right_field_types,
                         skippable: right_skippable,
-                        length: right_length,
                     })
                 }
             }
@@ -439,7 +505,7 @@ impl Default for SchemaBuilderNode {
 }
 
 impl SchemaBuilderNode {
-    fn build(self, builder: &mut SchemaBuilder) -> Result<SchemaNodeIndex, SerError> {
+    fn build(self, builder: &mut SchemaBuilder) -> Result<SchemaNodeIndex, TraceError> {
         let built = match self {
             SchemaBuilderNode::Bool => SchemaNode::Bool,
             SchemaBuilderNode::I8 => SchemaNode::I8,
@@ -491,13 +557,15 @@ impl SchemaBuilderNode {
                     .collect::<Result<Vec<_>, _>>()?;
                 variants.sort_unstable();
                 variants.dedup();
+                if variants.len() > MAX_UNION_VARIANTS {
+                    return Err(TraceError::from(TraceLimitErrorKind::UnionVariants))?;
+                }
                 SchemaNode::Union(builder.node_lists.intern_from(variants)?)
             }
             SchemaBuilderNode::Record {
                 name,
                 field_names,
                 field_types,
-                length,
                 mut skippable,
             } => {
                 // Filter out fields whose type is an empty union (bottom-typed) from the skippable
@@ -517,18 +585,21 @@ impl SchemaBuilderNode {
                         SchemaBuilderNode::Union(variants) if variants.is_empty()
                     )
                 });
+                if skippable.len() > MAX_SKIPPABLE_FIELDS {
+                    return Err(TraceError::from(TraceLimitErrorKind::SkippableFields))?;
+                }
                 let field_types = field_types
                     .into_iter()
                     .map(|field_type| field_type.build(builder))
                     .collect::<Result<Vec<_>, _>>()?;
                 let field_types = builder.node_lists.intern_from(field_types)?;
                 match (name, field_names) {
-                    (None, None) => SchemaNode::Tuple(length, field_types),
+                    (None, None) => SchemaNode::Tuple(field_types),
                     (Some(TypeName(name, None)), None) => {
-                        SchemaNode::TupleStruct(name, length, field_types)
+                        SchemaNode::TupleStruct(name, field_types)
                     }
                     (Some(TypeName(name, Some(variant))), None) => {
-                        SchemaNode::TupleVariant(name, variant, length, field_types)
+                        SchemaNode::TupleVariant(name, variant, field_types)
                     }
                     (None, Some(_field_names)) => {
                         unreachable!("anonymous structs don't exist in rust!")
@@ -550,7 +621,7 @@ impl SchemaBuilderNode {
                 }
             }
         };
-        builder.nodes.intern(built)
+        builder.nodes.intern(built).map_err(Into::into)
     }
 }
 
@@ -583,7 +654,7 @@ macro_rules! fn_serialize_as_le_bytes {
 
 impl<'a> Serializer for RootSerializer<'a> {
     type Ok = SchemaBuilderNode;
-    type Error = SerError;
+    type Error = TraceError;
 
     type SerializeSeq = SequenceSchemaBuilder<'a>;
     type SerializeTuple = TupleSchemaBuilder<'a>;
@@ -726,7 +797,6 @@ impl<'a> Serializer for RootSerializer<'a> {
             name: None,
             schemas: Vec::with_capacity(len),
             parent: self,
-            length: u32::try_from(len).map_err(|_| SerError::TooManyValues)?,
         })
     }
 
@@ -742,7 +812,6 @@ impl<'a> Serializer for RootSerializer<'a> {
             name: Some(self.push_struct_name(name)?),
             schemas: Vec::with_capacity(len),
             parent: self,
-            length: u32::try_from(len).map_err(|_| SerError::TooManyValues)?,
         })
     }
 
@@ -760,7 +829,6 @@ impl<'a> Serializer for RootSerializer<'a> {
             name: Some(self.push_variant_name(name, variant)?),
             schemas: Vec::with_capacity(len),
             parent: self,
-            length: u32::try_from(len).map_err(|_| SerError::TooManyValues)?,
         })
     }
 
@@ -808,12 +876,12 @@ pub(crate) struct SequenceSchemaBuilder<'a> {
     parent: RootSerializer<'a>,
     reserved_length: TraceIndex,
     item: SchemaBuilderNode,
-    length: u32,
+    length: usize,
 }
 
 impl<'a> SerializeSeq for SequenceSchemaBuilder<'a> {
     type Ok = SchemaBuilderNode;
-    type Error = SerError;
+    type Error = TraceError;
 
     #[inline]
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -828,8 +896,12 @@ impl<'a> SerializeSeq for SequenceSchemaBuilder<'a> {
 
     #[inline]
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        self.parent
-            .fill_reserved_bytes(self.reserved_length, &self.length.to_le_bytes());
+        self.parent.fill_reserved_bytes(
+            self.reserved_length,
+            &u32::try_from(self.length)
+                .map_err(|_| TraceLimitErrorKind::Values)?
+                .to_le_bytes(),
+        );
         Ok(SchemaBuilderNode::Sequence(Box::new(self.item)))
     }
 }
@@ -844,7 +916,7 @@ pub(crate) struct MapSchemaBuilder<'a> {
 
 impl SerializeMap for MapSchemaBuilder<'_> {
     type Ok = SchemaBuilderNode;
-    type Error = SerError;
+    type Error = TraceError;
 
     #[inline]
     fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
@@ -882,12 +954,11 @@ pub(crate) struct TupleSchemaBuilder<'a> {
     parent: RootSerializer<'a>,
     name: Option<TypeName>,
     schemas: Vec<SchemaBuilderNode>,
-    length: u32,
 }
 
 impl SerializeTuple for TupleSchemaBuilder<'_> {
     type Ok = SchemaBuilderNode;
-    type Error = SerError;
+    type Error = TraceError;
 
     #[inline]
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -905,7 +976,6 @@ impl SerializeTuple for TupleSchemaBuilder<'_> {
             name: self.name,
             field_names: None,
             field_types: self.schemas,
-            length: self.length,
             skippable: Vec::new(),
         })
     }
@@ -913,7 +983,7 @@ impl SerializeTuple for TupleSchemaBuilder<'_> {
 
 impl SerializeTupleStruct for TupleSchemaBuilder<'_> {
     type Ok = SchemaBuilderNode;
-    type Error = SerError;
+    type Error = TraceError;
 
     #[inline]
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -931,7 +1001,7 @@ impl SerializeTupleStruct for TupleSchemaBuilder<'_> {
 
 impl SerializeTupleVariant for TupleSchemaBuilder<'_> {
     type Ok = SchemaBuilderNode;
-    type Error = SerError;
+    type Error = TraceError;
 
     #[inline]
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -962,7 +1032,7 @@ impl<'a> StructSchemaBuilder<'a> {
         name: TypeName,
         length: usize,
         mut parent: RootSerializer<'a>,
-    ) -> Result<Self, SerError> {
+    ) -> Result<Self, TraceError> {
         let reserved_field_name_list = parent.reserve_u32()?;
         // Note that, maybe counter-intuitively, this `length` does NOT include skipped fields.
         // This explicitly documented by `serde`.
@@ -984,7 +1054,7 @@ impl<'a> StructSchemaBuilder<'a> {
 
 impl SerializeStruct for StructSchemaBuilder<'_> {
     type Ok = SchemaBuilderNode;
-    type Error = SerError;
+    type Error = TraceError;
 
     #[inline]
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
@@ -1011,7 +1081,6 @@ impl SerializeStruct for StructSchemaBuilder<'_> {
 
     #[inline]
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        let length = u32::try_from(self.field_names.len()).map_err(|_| SerError::TooManyValues)?;
         let field_names = Some(
             self.parent
                 .fill_reserved_field_name_list(self.reserved_field_name_list, self.field_names)?,
@@ -1021,14 +1090,13 @@ impl SerializeStruct for StructSchemaBuilder<'_> {
             field_names,
             field_types: self.field_types,
             skippable: self.skipped,
-            length,
         })
     }
 }
 
 impl SerializeStructVariant for StructSchemaBuilder<'_> {
     type Ok = SchemaBuilderNode;
-    type Error = SerError;
+    type Error = TraceError;
 
     #[inline]
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>

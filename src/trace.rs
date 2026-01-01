@@ -153,48 +153,50 @@ impl From<TraceNodeKind> for u8 {
 }
 
 pub(crate) trait ReadTraceExt<'data> {
-    fn pop_u8(&self) -> u8;
-    fn pop_slice(&self, len: usize) -> &'data [u8];
+    fn pop_u8<ErrorT: serde::ser::Error>(&self) -> Result<u8, ErrorT>;
+    fn pop_slice<ErrorT: serde::ser::Error>(&self, len: usize) -> Result<&'data [u8], ErrorT>;
 
-    fn pop_str(&self, len: usize) -> &'data str {
-        str::from_utf8(self.pop_slice(len)).expect("invalid utf-8 in traced string")
+    fn pop_str<ErrorT: serde::ser::Error>(&self, len: usize) -> Result<&'data str, ErrorT> {
+        str::from_utf8(self.pop_slice(len)?)
+            .map_err(|_| ErrorT::custom("invalid utf-8 in traced string"))
     }
 
-    fn pop_u16(&self) -> u16 {
-        u16::from_le_bytes(
-            self.pop_slice(std::mem::size_of::<u16>())
+    fn pop_u16<ErrorT: serde::ser::Error>(&self) -> Result<u16, ErrorT> {
+        Ok(u16::from_le_bytes(
+            self.pop_slice(std::mem::size_of::<u16>())?
                 .try_into()
                 .expect("impossible"),
-        )
+        ))
     }
 
-    fn pop_u32(&self) -> u32 {
-        u32::from_le_bytes(
-            self.pop_slice(std::mem::size_of::<u32>())
+    fn pop_u32<ErrorT: serde::ser::Error>(&self) -> Result<u32, ErrorT> {
+        Ok(u32::from_le_bytes(
+            self.pop_slice(std::mem::size_of::<u32>())?
                 .try_into()
                 .expect("impossible"),
-        )
+        ))
     }
 
-    fn pop_u64(&self) -> u64 {
-        u64::from_le_bytes(
-            self.pop_slice(std::mem::size_of::<u64>())
+    fn pop_u64<ErrorT: serde::ser::Error>(&self) -> Result<u64, ErrorT> {
+        Ok(u64::from_le_bytes(
+            self.pop_slice(std::mem::size_of::<u64>())?
                 .try_into()
                 .expect("impossible"),
-        )
+        ))
     }
 
-    fn pop_u128(&self) -> u128 {
-        u128::from_le_bytes(
-            self.pop_slice(std::mem::size_of::<u128>())
+    fn pop_u128<ErrorT: serde::ser::Error>(&self) -> Result<u128, ErrorT> {
+        Ok(u128::from_le_bytes(
+            self.pop_slice(std::mem::size_of::<u128>())?
                 .try_into()
                 .expect("impossible"),
-        )
+        ))
     }
 
-    fn pop_trace_node(&self) -> TraceNode {
-        let trace = TraceNodeKind::try_from(self.pop_u8()).expect("invalid trace");
-        match trace {
+    fn pop_trace_node<ErrorT: serde::ser::Error>(&self) -> Result<TraceNode, ErrorT> {
+        let trace = TraceNodeKind::try_from(self.pop_u8()?)
+            .map_err(|_| ErrorT::custom("bad trace node in trace"))?;
+        let node = match trace {
             TraceNodeKind::Bool => TraceNode::Bool,
             TraceNodeKind::I8 => TraceNode::I8,
             TraceNodeKind::I16 => TraceNode::I16,
@@ -217,104 +219,110 @@ pub(crate) trait ReadTraceExt<'data> {
 
             TraceNodeKind::Unit => TraceNode::Unit,
 
-            TraceNodeKind::UnitStruct => TraceNode::UnitStruct(self.pop_type_name()),
+            TraceNodeKind::UnitStruct => TraceNode::UnitStruct(self.pop_type_name()?),
             TraceNodeKind::UnitVariant => {
-                TraceNode::UnitVariant(self.pop_type_name(), self.pop_variant_name())
+                TraceNode::UnitVariant(self.pop_type_name()?, self.pop_variant_name()?)
             }
 
-            TraceNodeKind::NewtypeStruct => TraceNode::NewtypeStruct(self.pop_type_name()),
+            TraceNodeKind::NewtypeStruct => TraceNode::NewtypeStruct(self.pop_type_name()?),
             TraceNodeKind::NewtypeVariant => {
-                TraceNode::NewtypeVariant(self.pop_type_name(), self.pop_variant_name())
+                TraceNode::NewtypeVariant(self.pop_type_name()?, self.pop_variant_name()?)
             }
 
             TraceNodeKind::Map => TraceNode::Map,
             TraceNodeKind::Sequence => TraceNode::Sequence,
 
-            TraceNodeKind::Tuple => TraceNode::Tuple(self.pop_u32()),
+            TraceNodeKind::Tuple => TraceNode::Tuple(self.pop_u32()?),
             TraceNodeKind::TupleStruct => {
-                TraceNode::TupleStruct(self.pop_u32(), self.pop_type_name())
+                TraceNode::TupleStruct(self.pop_u32()?, self.pop_type_name()?)
             }
             TraceNodeKind::TupleVariant => TraceNode::TupleVariant(
-                self.pop_u32(),
-                self.pop_type_name(),
-                self.pop_variant_name(),
+                self.pop_u32()?,
+                self.pop_type_name()?,
+                self.pop_variant_name()?,
             ),
 
             TraceNodeKind::Struct => {
-                TraceNode::Struct(self.pop_type_name(), self.pop_field_name_list())
+                TraceNode::Struct(self.pop_type_name()?, self.pop_field_name_list()?)
             }
             TraceNodeKind::StructVariant => TraceNode::StructVariant(
-                self.pop_type_name(),
-                self.pop_variant_name(),
-                self.pop_field_name_list(),
+                self.pop_type_name()?,
+                self.pop_variant_name()?,
+                self.pop_field_name_list()?,
             ),
-        }
+        };
+        Ok(node)
     }
 
-    fn pop_variant_name(&self) -> VariantNameIndex {
-        self.pop_u32().into()
+    fn pop_variant_name<ErrorT: serde::ser::Error>(&self) -> Result<VariantNameIndex, ErrorT> {
+        Ok(self.pop_u32()?.into())
     }
 
-    fn pop_type_name(&self) -> TypeNameIndex {
-        self.pop_u32().into()
+    fn pop_type_name<ErrorT: serde::ser::Error>(&self) -> Result<TypeNameIndex, ErrorT> {
+        Ok(self.pop_u32()?.into())
     }
 
-    fn pop_field_name_list(&self) -> FieldNameListIndex {
-        self.pop_u32().into()
+    fn pop_field_name_list<ErrorT: serde::ser::Error>(&self) -> Result<FieldNameListIndex, ErrorT> {
+        Ok(self.pop_u32()?.into())
     }
 
-    fn pop_bool(&self) -> bool {
-        self.pop_u8() != 0
+    fn pop_bool<ErrorT: serde::ser::Error>(&self) -> Result<bool, ErrorT> {
+        Ok(self.pop_u8()? != 0)
     }
 
-    fn pop_i8(&self) -> i8 {
-        self.pop_u8() as i8
+    fn pop_i8<ErrorT: serde::ser::Error>(&self) -> Result<i8, ErrorT> {
+        Ok(self.pop_u8()? as i8)
     }
 
-    fn pop_i16(&self) -> i16 {
-        self.pop_u16() as i16
+    fn pop_i16<ErrorT: serde::ser::Error>(&self) -> Result<i16, ErrorT> {
+        Ok(self.pop_u16()? as i16)
     }
 
-    fn pop_i32(&self) -> i32 {
-        self.pop_u32() as i32
+    fn pop_i32<ErrorT: serde::ser::Error>(&self) -> Result<i32, ErrorT> {
+        Ok(self.pop_u32()? as i32)
     }
 
-    fn pop_i64(&self) -> i64 {
-        self.pop_u64() as i64
+    fn pop_i64<ErrorT: serde::ser::Error>(&self) -> Result<i64, ErrorT> {
+        Ok(self.pop_u64()? as i64)
     }
 
-    fn pop_i128(&self) -> i128 {
-        self.pop_u128() as i128
+    fn pop_i128<ErrorT: serde::ser::Error>(&self) -> Result<i128, ErrorT> {
+        Ok(self.pop_u128()? as i128)
     }
 
-    fn pop_char(&self) -> char {
-        char::try_from(self.pop_u32()).expect("expected char")
+    fn pop_char<ErrorT: serde::ser::Error>(&self) -> Result<char, ErrorT> {
+        char::try_from(self.pop_u32()?).map_err(|_| ErrorT::custom("bad char in trace"))
     }
 
-    fn pop_f32(&self) -> f32 {
-        f32::from_bits(self.pop_u32())
+    fn pop_f32<ErrorT: serde::ser::Error>(&self) -> Result<f32, ErrorT> {
+        Ok(f32::from_bits(self.pop_u32()?))
     }
 
-    fn pop_f64(&self) -> f64 {
-        f64::from_bits(self.pop_u64())
+    fn pop_f64<ErrorT: serde::ser::Error>(&self) -> Result<f64, ErrorT> {
+        Ok(f64::from_bits(self.pop_u64()?))
     }
 
-    fn pop_length_u32(&self) -> usize {
-        usize::try_from(self.pop_u32()).expect("usize needs to be at least 32 bits")
+    fn pop_length_u32<ErrorT: serde::ser::Error>(&self) -> Result<usize, ErrorT> {
+        Ok(usize::try_from(self.pop_u32()?).expect("usize needs to be at least 32 bits"))
     }
 }
 
 impl<'data> ReadTraceExt<'data> for Cell<&'data [u8]> {
-    fn pop_u8(&self) -> u8 {
+    fn pop_u8<ErrorT: serde::ser::Error>(&self) -> Result<u8, ErrorT> {
         let mut data = self.get();
-        let byte = *data.split_off_first().expect("expected byte");
+        let byte = *data
+            .split_off_first()
+            .ok_or_else(|| ErrorT::custom("unexpected end of trace"))?;
         self.set(data);
-        byte
+        Ok(byte)
     }
 
-    fn pop_slice(&self, len: usize) -> &'data [u8] {
-        let (head, tail) = self.get().split_at(len);
-        self.set(tail);
-        head
+    fn pop_slice<ErrorT: serde::ser::Error>(&self, len: usize) -> Result<&'data [u8], ErrorT> {
+        if let Some((head, tail)) = self.get().split_at_checked(len) {
+            self.set(tail);
+            Ok(head)
+        } else {
+            Err(ErrorT::custom("unexpected end of trace"))
+        }
     }
 }

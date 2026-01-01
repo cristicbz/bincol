@@ -14,8 +14,10 @@ use crate::{
 
 /// A saved schema that describes serialized data in a non-self-describing format.
 ///
-/// Produced via a [`SchemaBuilder`][`crate::SchemaBuilder`] which traces the various serialized types, see that
-/// type's documentation for a complete example.
+/// Produced via a [`SchemaBuilder`][`crate::SchemaBuilder`] which traces the various serialized
+/// types, see its documentation for a complete example. Crucially, a given [`Schema`] can only be
+/// used to serialize the data that was traced by the same
+/// [`SchemaBuilder`][`crate::SchemaBuilder`] that produced it.
 ///
 /// For simple use-cases where the [`Schema`] should be serialized together with the data, use
 /// the [`SelfDescribed`][`crate::SelfDescribed`] wrapper, which obviates the need for an
@@ -243,9 +245,9 @@ pub(crate) enum SchemaNode {
     Sequence(SchemaNodeIndex),
     Map(SchemaNodeIndex, SchemaNodeIndex),
 
-    Tuple(u32, SchemaNodeListIndex),
-    TupleStruct(TypeNameIndex, u32, SchemaNodeListIndex),
-    TupleVariant(TypeNameIndex, VariantNameIndex, u32, SchemaNodeListIndex),
+    Tuple(SchemaNodeListIndex),
+    TupleStruct(TypeNameIndex, SchemaNodeListIndex),
+    TupleVariant(TypeNameIndex, VariantNameIndex, SchemaNodeListIndex),
 
     Struct(
         TypeNameIndex,

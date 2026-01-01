@@ -28,13 +28,13 @@ macro_rules! u32_indices {
             }
 
             impl TryFrom<usize> for $index_ty {
-                type Error = $crate::errors::SerError;
+                type Error = $crate::builder::TraceLimitErrorKind;
 
                 #[inline]
                 fn try_from(value: usize) -> Result<Self, Self::Error> {
                     match u32::try_from(value) {
                         Ok(value) => Ok($index_ty(value)),
-                        Err(_) => Err($crate::errors::SerError::$error),
+                        Err(_) => Err($crate::builder::TraceLimitErrorKind::$error),
                     }
                 }
             }
@@ -135,23 +135,20 @@ macro_rules! impl_is_empty {
 }
 
 u32_indices! {
-    SchemaNodeIndex => TooManySchemaNodes,
-    SchemaNodeListIndex => TooManySchemaNodeLists,
-    MemberListIndex => TooManyMembers,
-    MemberIndex => TooManyMembers,
-    TypeNameIndex => TooManyNames,
-    VariantNameIndex => TooManyNames,
-    FieldNameIndex => TooManyNames,
-    FieldNameListIndex => TooManyFieldNameLists,
-    TraceIndex => TooManyValues,
+    SchemaNodeIndex => SchemaNodes,
+    SchemaNodeListIndex => SchemaNodeLists,
+    MemberListIndex => MemberLists,
+    MemberIndex => Members,
+    TypeNameIndex => Names,
+    VariantNameIndex => Names,
+    FieldNameIndex => Names,
+    FieldNameListIndex => FieldNameLists,
+    TraceIndex => Values,
 }
 
 impl_is_empty! {
     SchemaNodeIndex,
     SchemaNodeListIndex,
-    MemberListIndex,
     FieldNameListIndex,
-    TypeNameIndex,
-    VariantNameIndex,
-    FieldNameIndex,
+    MemberListIndex,
 }

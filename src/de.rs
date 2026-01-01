@@ -438,9 +438,9 @@ where
             SchemaNode::Sequence(_) => Unexpected::Seq,
             SchemaNode::Map(_, _) => Unexpected::Map,
 
-            SchemaNode::Tuple(_, _) => Unexpected::Other("tuple"),
-            SchemaNode::TupleStruct(_, _, _) => Unexpected::Other("tuple struct"),
-            SchemaNode::TupleVariant(_, _, _, _) => Unexpected::TupleVariant,
+            SchemaNode::Tuple(_) => Unexpected::Other("tuple"),
+            SchemaNode::TupleStruct(_, _) => Unexpected::Other("tuple struct"),
+            SchemaNode::TupleVariant(_, _, _) => Unexpected::TupleVariant,
 
             SchemaNode::Struct(_, _, _, _) => Unexpected::Other("struct"),
             SchemaNode::StructVariant(_, _, _, _, _) => Unexpected::StructVariant,
@@ -529,9 +529,9 @@ where
             }
             SchemaNode::Sequence(item) => self.do_deserialize_seq(item, visitor),
             SchemaNode::Map(key, value) => self.do_deserialize_map(key, value, visitor),
-            SchemaNode::Tuple(_, field_types)
-            | SchemaNode::TupleStruct(_, _, field_types)
-            | SchemaNode::TupleVariant(_, _, _, field_types) => {
+            SchemaNode::Tuple(field_types)
+            | SchemaNode::TupleStruct(_, field_types)
+            | SchemaNode::TupleVariant(_, _, field_types) => {
                 self.do_deserialize_tuple(field_types, visitor)
             }
             SchemaNode::Struct(_, field_names, skip_list, field_types)
@@ -631,9 +631,9 @@ where
             | SchemaNode::OptionSome(inner) => self.forward(inner)?.deserialize_seq(visitor),
 
             SchemaNode::Sequence(item) => self.do_deserialize_seq(item, visitor),
-            SchemaNode::Tuple(_, field_types)
-            | SchemaNode::TupleStruct(_, _, field_types)
-            | SchemaNode::TupleVariant(_, _, _, field_types) => {
+            SchemaNode::Tuple(field_types)
+            | SchemaNode::TupleStruct(_, field_types)
+            | SchemaNode::TupleVariant(_, _, field_types) => {
                 self.do_deserialize_tuple(field_types, visitor)
             }
             _ => self.invalid_type_error(&visitor),
@@ -653,9 +653,9 @@ where
             | SchemaNode::NewtypeVariant(_, _, inner)
             | SchemaNode::OptionSome(inner) => self.forward(inner)?.deserialize_tuple(len, visitor),
 
-            SchemaNode::Tuple(_, field_types)
-            | SchemaNode::TupleStruct(_, _, field_types)
-            | SchemaNode::TupleVariant(_, _, _, field_types) => {
+            SchemaNode::Tuple(field_types)
+            | SchemaNode::TupleStruct(_, field_types)
+            | SchemaNode::TupleVariant(_, _, field_types) => {
                 self.do_deserialize_tuple(field_types, visitor)
             }
 
@@ -770,7 +770,7 @@ where
             }
             SchemaNode::OptionSome(inner) => self.forward(inner)?.deserialize_identifier(visitor),
             SchemaNode::UnitVariant(_, variant)
-            | SchemaNode::TupleVariant(_, variant, _, _)
+            | SchemaNode::TupleVariant(_, variant, _)
             | SchemaNode::StructVariant(_, variant, _, _, _) => visitor.visit_str(
                 self.schema
                     .variant_name(variant)
@@ -1354,8 +1354,8 @@ impl<'de> serde::de::Visitor<'de> for AnonymousVariantSeed {
     where
         E: serde::de::Error,
     {
-        (if value.len() > 2 {
-            u64::from_str_radix(&value[2..], 16).ok()
+        (if let Some(hex) = value.strip_prefix('_') {
+            u64::from_str_radix(hex, 16).ok()
         } else {
             None
         })

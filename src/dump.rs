@@ -100,22 +100,22 @@ impl Schema {
                 writeln!(output, "{indent}],").expect("string output")
             }
 
-            SchemaNode::Tuple(_, schema_list) => {
+            SchemaNode::Tuple(type_list) => {
                 writeln!(output, "{indent}(").expect("string output");
-                for &node in self.node_list(schema_list)? {
+                for &node in self.node_list(type_list)? {
                     self.recursive_dump(indent, node, output)?;
                 }
                 writeln!(output, "{indent}),").expect("string output");
             }
 
-            SchemaNode::TupleStruct(name, _, schema_list) => {
+            SchemaNode::TupleStruct(name, type_list) => {
                 writeln!(output, "{}{}(", indent, self.type_name(name)?).expect("string output");
-                for &node in self.node_list(schema_list)? {
+                for &node in self.node_list(type_list)? {
                     self.recursive_dump(indent, node, output)?;
                 }
                 writeln!(output, "{indent}),").expect("string output");
             }
-            SchemaNode::TupleVariant(name, variant, _, schema_list) => {
+            SchemaNode::TupleVariant(name, variant, type_list) => {
                 writeln!(
                     output,
                     "{}{}::{}(",
@@ -124,7 +124,7 @@ impl Schema {
                     self.variant_name(variant)?
                 )
                 .expect("string output");
-                for &node in self.node_list(schema_list)? {
+                for &node in self.node_list(type_list)? {
                     self.recursive_dump(indent, node, output)?;
                 }
                 writeln!(output, "{indent}),").expect("string output");
