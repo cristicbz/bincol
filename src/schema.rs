@@ -22,7 +22,7 @@ use crate::{
 /// For simple use-cases where the [`Schema`] should be serialized together with the data, use
 /// the [`SelfDescribed`][`crate::SelfDescribed`] wrapper, which obviates the need for an
 /// explicitly managed [`Schema`] object.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct Schema {
     pub(crate) root_index: SchemaNodeIndex,
     pub(crate) nodes: ReadonlyPool<SchemaNode, SchemaNodeIndex>,
@@ -272,5 +272,81 @@ impl IsEmpty for SchemaNode {
 
     fn is_empty(&self) -> bool {
         matches!(self, Self::BORROWED_EMPTY)
+    }
+}
+
+#[derive(Serialize)]
+enum VersionedSchemaSerializeProxy<'a> {
+    V0 {
+        root_index: SchemaNodeIndex,
+        nodes: &'a ReadonlyPool<SchemaNode, SchemaNodeIndex>,
+        node_lists: &'a ReadonlyPool<Box<[SchemaNodeIndex]>, SchemaNodeListIndex>,
+        member_lists: &'a ReadonlyPool<Box<[MemberIndex]>, MemberListIndex>,
+        field_name_lists: &'a ReadonlyNonEmptyPool<Box<[FieldNameIndex]>, FieldNameListIndex>,
+        field_names: &'a ReadonlyNonEmptyPool<Box<str>, FieldNameIndex>,
+        variant_names: &'a ReadonlyNonEmptyPool<Box<str>, VariantNameIndex>,
+        type_names: &'a ReadonlyNonEmptyPool<Box<str>, TypeNameIndex>,
+    },
+}
+
+#[derive(Deserialize)]
+enum VersionedSchemaDeserializeProxy {
+    V0 {
+        root_index: SchemaNodeIndex,
+        nodes: ReadonlyPool<SchemaNode, SchemaNodeIndex>,
+        node_lists: ReadonlyPool<Box<[SchemaNodeIndex]>, SchemaNodeListIndex>,
+        member_lists: ReadonlyPool<Box<[MemberIndex]>, MemberListIndex>,
+        field_name_lists: ReadonlyNonEmptyPool<Box<[FieldNameIndex]>, FieldNameListIndex>,
+        field_names: ReadonlyNonEmptyPool<Box<str>, FieldNameIndex>,
+        variant_names: ReadonlyNonEmptyPool<Box<str>, VariantNameIndex>,
+        type_names: ReadonlyNonEmptyPool<Box<str>, TypeNameIndex>,
+    },
+}
+
+impl Serialize for Schema {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        VersionedSchemaSerializeProxy::V0 {
+            root_index: self.root_index,
+            nodes: &self.nodes,
+            node_lists: &self.node_lists,
+            member_lists: &self.member_lists,
+            field_name_lists: &self.field_name_lists,
+            field_names: &self.field_names,
+            variant_names: &self.variant_names,
+            type_names: &self.type_names,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Schema {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match VersionedSchemaDeserializeProxy::deserialize(deserializer)? {
+            VersionedSchemaDeserializeProxy::V0 {
+                root_index,
+                nodes,
+                node_lists,
+                member_lists,
+                field_name_lists,
+                field_names,
+                variant_names,
+                type_names,
+            } => Ok(Self {
+                root_index,
+                nodes,
+                node_lists,
+                member_lists,
+                field_name_lists,
+                field_names,
+                variant_names,
+                type_names,
+            }),
+        }
     }
 }
