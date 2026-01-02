@@ -559,7 +559,6 @@ where
     deserialize_simple! { deserialize_f64, @float }
     deserialize_simple! { deserialize_char, SchemaNode::Char }
 
-    // TODO: schema evolution string <-> bytes
     deserialize_simple! { deserialize_str, SchemaNode::String }
     deserialize_simple! { deserialize_string, SchemaNode::String }
     deserialize_simple! { deserialize_bytes, SchemaNode::Bytes }
