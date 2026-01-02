@@ -246,6 +246,12 @@ impl<'a> TraceCursor<'a> {
         }
     }
 
+    // Checks whether the trace matches the schema node.
+    //
+    // Note that this check is shallow, tightly coupled with the logic in
+    // `SchemaBuilderNode::unify`. The assumption is that, within a union there is:
+    //  * At most one record type (incl. units and newtypes) with a given (name, variant, field_names, length).
+    //  * At most one `Some(_)`, `Sequence[_]`, `Map[_, _]`
     #[inline]
     fn check<ErrorT>(&self) -> Result<Option<CheckResult<'a>>, ErrorT>
     where
