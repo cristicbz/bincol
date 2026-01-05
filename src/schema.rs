@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize, de::DeserializeSeed};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeSeed};
 use std::{hash::Hash, marker::PhantomData};
 use thiserror::Error;
 
@@ -35,6 +35,21 @@ pub struct Schema {
 }
 
 impl Schema {
+    /// Deserializes a value that was previously serialized with [`Self::describe_trace`].
+    ///
+    /// If you don't need a shared schema, use the much simpler [`crate::SelfDescribed`] wrapper
+    /// wrapper.
+    pub fn deserialize_described<'schema, 'de, DeserializeT, DeserializerT>(
+        &'schema self,
+        deserializer: DeserializerT,
+    ) -> Result<DeserializeT, DeserializerT::Error>
+    where
+        DeserializeT: Deserialize<'de>,
+        DeserializerT: Deserializer<'de>,
+    {
+        Ok(DescribedBy(PhantomData, self).deserialize(deserializer)?.0)
+    }
+
     /// Returns a [`serde::de::DeserializeSeed`] for a value to be deserialized using this schema.
     ///
     /// If you don't need a shared schema, use the much simpler [`crate::SelfDescribed`] wrapper
