@@ -7,7 +7,7 @@
 
 Make a non-self-describing [`serde`](https://docs.rs/serde) format (like
 [`bincode`](https://docs.rs/bincode2), [`bitcode`](https://docs.rs/bitcode) or
-[`postcard`](https://docs.rs/postcard)) behave as like a self-describing one by
+[`postcard`](https://docs.rs/postcard)) behave as a self-describing one by
 transparently serializing a schema alongside (or [separately
 from](#advanced-usage-external-schema)) the data.
 
