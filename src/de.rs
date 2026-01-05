@@ -14,7 +14,7 @@ use crate::{
     described::{DescribedBy, SelfDescribed},
     indices::{
         FieldNameIndex, FieldNameListIndex, IsEmpty, MemberIndex, MemberListIndex, SchemaNodeIndex,
-        SchemaNodeListIndex,
+        SchemaNodeListIndex, VariantNameIndex,
     },
     schema::SchemaNode,
 };
@@ -111,6 +111,20 @@ pub(crate) struct SchemaDeserializer<'schema, InnerT> {
 }
 
 impl<'schema, InnerT> SchemaDeserializer<'schema, InnerT> {
+    #[inline]
+    fn variant_name_deserializer<ErrorT>(
+        &self,
+        variant: VariantNameIndex,
+    ) -> Result<NameDeserializer<'schema, ErrorT>, ErrorT>
+    where
+        ErrorT: serde::de::Error,
+    {
+        Ok(NameDeserializer {
+            name: self.schema.variant_name(variant).map_err(ErrorT::custom)?,
+            phantom: PhantomData,
+        })
+    }
+
     #[inline]
     fn forward<ErrorT>(self, node: SchemaNodeIndex) -> Result<Self, ErrorT>
     where
@@ -798,16 +812,16 @@ where
     {
         match self.node {
             SchemaNode::UnitVariant(_, variant)
-            | SchemaNode::NewtypeVariant(_, variant, _)
+            | SchemaNode::TupleVariant(_, variant, _)
             | SchemaNode::StructVariant(_, variant, _, _, _) => seed
-                .deserialize(NameDeserializer {
-                    name: self
-                        .schema
-                        .variant_name(variant)
-                        .map_err(DeserializerT::Error::custom)?,
-                    phantom: PhantomData,
+                .deserialize(self.variant_name_deserializer(variant)?)
+                .map(move |value| (value, self)),
+            SchemaNode::NewtypeVariant(_, variant, inner) => {
+                self.forward(inner).and_then(|newtype| {
+                    seed.deserialize(newtype.variant_name_deserializer(variant)?)
+                        .map(|value| (value, newtype))
                 })
-                .map(|value| (value, self)),
+            }
             _ => self.invalid_type_error(&"enum variant"),
         }
     }

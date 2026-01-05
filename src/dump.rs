@@ -1,5 +1,8 @@
 use serde::Serialize;
-use std::fmt::{Display, Write};
+use std::{
+    collections::HashSet,
+    fmt::{Display, Write},
+};
 use thiserror::Error;
 
 use crate::{
@@ -181,10 +184,12 @@ impl Schema {
             write!(context, "_{index}(")?;
             context.write_newline()?;
             context.nest();
-            for (i_child, &node) in children.iter().enumerate() {
-                context.write_indent()?;
-                self.recursive_dump(context, node)?;
-                context.write_comma(i_child == children.len() - 1)?;
+            if context.visit(index)? {
+                for (i_child, &node) in children.iter().enumerate() {
+                    context.write_indent()?;
+                    self.recursive_dump(context, node)?;
+                    context.write_comma(i_child == children.len() - 1)?;
+                }
             }
             context.unnest();
             context.write_indent()?;
@@ -214,28 +219,30 @@ impl Schema {
             context.write_newline()?;
             context.nest();
             context.write_indent_or_space()?;
-            let mut skips = self.member_list(skip_list)?;
-            let field_names = self.field_name_list(field_names)?;
-            for (i_field, (&name, &node)) in field_names
-                .iter()
-                .zip(self.node_list(field_types)?)
-                .enumerate()
-            {
-                if i_field > 0 {
-                    context.write_indent()?;
-                }
-                context.write_str(self.field_name(name)?)?;
-                if let Some(&i_next_skip) = skips.first()
-                    && usize::from(i_next_skip) == i_field
+            if context.visit(index)? {
+                let mut skips = self.member_list(skip_list)?;
+                let field_names = self.field_name_list(field_names)?;
+                for (i_field, (&name, &node)) in field_names
+                    .iter()
+                    .zip(self.node_list(field_types)?)
+                    .enumerate()
                 {
-                    skips.split_off_first();
-                    context.write_char('?')?;
-                } else if node.is_empty() {
-                    context.write_char('?')?;
-                };
-                context.write_str(": ")?;
-                self.recursive_dump(context, node)?;
-                context.write_comma(i_field == field_names.len() - 1)?;
+                    if i_field > 0 {
+                        context.write_indent()?;
+                    }
+                    context.write_str(self.field_name(name)?)?;
+                    if let Some(&i_next_skip) = skips.first()
+                        && usize::from(i_next_skip) == i_field
+                    {
+                        skips.split_off_first();
+                        context.write_char('?')?;
+                    } else if node.is_empty() {
+                        context.write_char('?')?;
+                    };
+                    context.write_str(": ")?;
+                    self.recursive_dump(context, node)?;
+                    context.write_comma(i_field == field_names.len() - 1)?;
+                }
             }
             context.unnest();
             context.write_indent_or_space()?;
@@ -279,6 +286,7 @@ struct DumpContext {
     output: String,
     check_line_length: bool,
     line_length: usize,
+    node_collapse: HashSet<usize>,
 }
 
 impl DumpContext {
@@ -290,6 +298,7 @@ impl DumpContext {
             output: String::new(),
             check_line_length: false,
             line_length: 0,
+            node_collapse: HashSet::new(),
         }
     }
 
@@ -301,6 +310,7 @@ impl DumpContext {
             output: String::new(),
             check_line_length: false,
             line_length: 0,
+            node_collapse: HashSet::new(),
         }
     }
 
@@ -318,14 +328,24 @@ impl DumpContext {
             output: String::new(),
             check_line_length: true,
             line_length: self.line_length,
+            node_collapse: self.node_collapse.clone(),
         };
         if dump(&mut child).is_err() {
             dump(self)
         } else {
             self.output.push_str(&child.output);
+            self.node_collapse = child.node_collapse;
             self.line_length = child.line_length;
             self.indent = child.indent;
             Ok(())
+        }
+    }
+
+    pub fn visit(&mut self, index: usize) -> Result<bool, std::fmt::Error> {
+        if self.node_collapse.insert(index) {
+            Ok(true)
+        } else {
+            self.write_str("..").map(|()| false)
         }
     }
 
