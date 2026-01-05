@@ -141,12 +141,13 @@ where
 #[serde(transparent)]
 pub struct TupleVariant<T = String, U = ()>(Enum<T, U>);
 
-impl<T, U> From<T> for TupleVariant<T, U>
+impl<T, U> From<String> for TupleVariant<T, U>
 where
+    T: From<String>,
     U: Default,
 {
-    fn from(field: T) -> Self {
-        Self(Enum::Tuple(field, U::default()))
+    fn from(field: String) -> Self {
+        Self(Enum::Tuple(field.into(), U::default()))
     }
 }
 
@@ -227,10 +228,14 @@ macro_rules! tests {
 }
 
 tests! {
-    fn test_string_and_some<String, OptionSome>(check_equal_str_two_way);
-    fn test_string_to_ignored_any<String, IgnoredAny>(check_ok_str_one_way);
-    fn test_string_and_field_struct<String, FieldStruct>(check_fails_str_two_way);
-    fn test_string_and_optional<String, FieldStruct<OptionSome>>(check_fails_str_two_way);
+    fn test_string_to_ignored_any_ok<String, IgnoredAny>(check_ok_str_one_way);
+    fn test_string_and_newtype_ok<String, NewType>(check_equal_str_two_way);
+    fn test_string_and_tuple_struct_fail<String, TupleStruct>(check_fails_str_two_way);
+    fn test_string_and_field_struct_fail<String, FieldStruct>(check_fails_str_two_way);
+    fn test_string_and_newtype_variant_ok<String, NewTypeVariant>(check_equal_str_two_way);
+    fn test_string_and_tuple_variant_fail<String, TupleVariant>(check_fails_str_two_way);
+    fn test_string_and_struct_variant_fail<String, StructVariant>(check_fails_str_two_way);
+    fn test_string_and_option_some_ok<String, OptionSome>(check_equal_str_two_way);
 }
 
 pub(crate) fn check_equal_str_two_way<
@@ -242,6 +247,20 @@ pub(crate) fn check_equal_str_two_way<
 }
 
 pub(crate) fn check_equal_str_one_way<
+    T: Serialize + Debug + AsRef<str> + From<String>,
+    U: DeserializeOwned + Debug + AsRef<str>,
+>() {
+    check_equal_str_one_way_leaf::<T, U>();
+    check_equal_str_one_way_leaf::<NewType<T>, NewType<U>>();
+    check_equal_str_one_way_leaf::<TupleStruct<T>, TupleStruct<U>>();
+    check_equal_str_one_way_leaf::<FieldStruct<T>, FieldStruct<U>>();
+    check_equal_str_one_way_leaf::<NewTypeVariant<T>, NewTypeVariant<U>>();
+    check_equal_str_one_way_leaf::<TupleVariant<T>, TupleVariant<U>>();
+    check_equal_str_one_way_leaf::<StructVariant<T>, StructVariant<U>>();
+    check_equal_str_one_way_leaf::<OptionSome<T>, OptionSome<U>>();
+}
+
+pub(crate) fn check_equal_str_one_way_leaf<
     T: Serialize + Debug + AsRef<str> + From<String>,
     U: DeserializeOwned + Debug + AsRef<str>,
 >() {
@@ -257,6 +276,20 @@ pub(crate) fn check_ok_str_one_way<
     T: Serialize + Debug + From<String>,
     U: DeserializeOwned + Debug,
 >() {
+    check_ok_str_one_way_leaf::<T, U>();
+    check_ok_str_one_way_leaf::<NewType<T>, NewType<U>>();
+    check_ok_str_one_way_leaf::<TupleStruct<T>, TupleStruct<U>>();
+    check_ok_str_one_way_leaf::<FieldStruct<T>, FieldStruct<U>>();
+    check_ok_str_one_way_leaf::<NewTypeVariant<T>, NewTypeVariant<U>>();
+    check_ok_str_one_way_leaf::<TupleVariant<T>, TupleVariant<U>>();
+    check_ok_str_one_way_leaf::<StructVariant<T>, StructVariant<U>>();
+    check_ok_str_one_way_leaf::<OptionSome<T>, OptionSome<U>>();
+}
+
+pub(crate) fn check_ok_str_one_way_leaf<
+    T: Serialize + Debug + From<String>,
+    U: DeserializeOwned + Debug,
+>() {
     check_evolution_ok::<_, U>(&T::from(String::new()), |_, _| true);
     check_evolution_ok::<_, U>(&T::from("string".to_owned()), |_, _| true);
 }
@@ -269,7 +302,22 @@ pub(crate) fn check_fails_str_two_way<
     check_fails_str_one_way::<U, T>();
 }
 
-pub(crate) fn check_fails_str_one_way<
+pub(crate) fn check_fails_str_one_way<T, U>()
+where
+    T: Serialize + Debug + From<String>,
+    U: DeserializeOwned + Debug,
+{
+    check_fails_str_one_way_leaf::<T, U>();
+    check_fails_str_one_way_leaf::<NewType<T>, NewType<U>>();
+    check_fails_str_one_way_leaf::<TupleStruct<T>, TupleStruct<U>>();
+    check_fails_str_one_way_leaf::<FieldStruct<T>, FieldStruct<U>>();
+    check_fails_str_one_way_leaf::<NewTypeVariant<T>, NewTypeVariant<U>>();
+    check_fails_str_one_way_leaf::<TupleVariant<T>, TupleVariant<U>>();
+    check_fails_str_one_way_leaf::<StructVariant<T>, StructVariant<U>>();
+    check_fails_str_one_way_leaf::<OptionSome<T>, OptionSome<U>>();
+}
+
+pub(crate) fn check_fails_str_one_way_leaf<
     T: Serialize + Debug + From<String>,
     U: DeserializeOwned + Debug,
 >() {
