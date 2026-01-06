@@ -1,14 +1,13 @@
 use serde::{
-    Deserialize,
     de::{
         DeserializeSeed, Deserializer, EnumAccess, Error as _, Expected, IgnoredAny, MapAccess,
         SeqAccess, Unexpected, VariantAccess,
     },
+    Deserialize,
 };
 use std::marker::PhantomData;
 
 use crate::{
-    Schema,
     anonymous_union::ChunkedEnum,
     deferred::{self, CallResult, CanonicalVisit, DeferredDeserialize},
     described::{DescribedBy, SelfDescribed},
@@ -17,6 +16,7 @@ use crate::{
         SchemaNodeListIndex, VariantNameIndex,
     },
     schema::SchemaNode,
+    Schema,
 };
 
 impl<'de, T> Deserialize<'de> for SelfDescribed<T>
@@ -253,9 +253,9 @@ where
     {
         match self.node {
             SchemaNode::Union(variants) => self.deserialize_union(variants, call),
-            SchemaNode::OptionSome(inner)
-            | SchemaNode::NewtypeStruct(_, inner)
-            | SchemaNode::NewtypeVariant(_, _, inner) => call.call(self.forward(inner)?),
+            SchemaNode::OptionSome(inner) | SchemaNode::NewtypeStruct(_, inner) => {
+                call.call(self.forward(inner)?)
+            }
             actual if condition(actual) => call.call(self.inner),
             _ => self.invalid_type_error(&call),
         }
